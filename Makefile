@@ -418,14 +418,12 @@ ifeq ($(with_fauxton), 1)
 endif
 
 ifeq ($(with_docs), 1)
-ifeq ($(IN_RELEASE), true)
 	@mkdir -p rel/couchdb/share/www/docs/
 	@mkdir -p rel/couchdb/share/docs/
+ifeq ($(IN_RELEASE), true)
 	@cp -R share/docs/html/* rel/couchdb/share/www/docs/
 	@cp share/docs/man/apachecouchdb.1 rel/couchdb/share/docs/couchdb.1
 else
-	@mkdir -p rel/couchdb/share/www/docs/
-	@mkdir -p rel/couchdb/share/docs/
 	@cp -R src/docs/build/html/ rel/couchdb/share/www/docs
 	@cp src/docs/build/man/apachecouchdb.1 rel/couchdb/share/docs/couchdb.1
 endif
@@ -546,13 +544,14 @@ derived:
 ################################################################################
 
 .PHONY: nouveau
-# Build nouveau
+# target: nouveau - Build nouveau
 nouveau:
 ifeq ($(with_nouveau), 1)
 	@cd nouveau && ./gradlew build -x test
 endif
 
 .PHONY: nouveau-test
+# target: nouveau-test - Run nouveau tests
 nouveau-test: nouveau-test-gradle nouveau-test-elixir
 
 .PHONY: nouveau-test-gradle
