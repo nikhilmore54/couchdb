@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
 # the License at
@@ -59,13 +58,18 @@ def setup_users(db, **kwargs):
     db.save_docs(copy.deepcopy(USERS_DOCS))
 
 
-def teardown_users(db):
-    [db.delete_doc(doc["_id"]) for doc in USERS_DOCS]
-
-
-def setup(db, index_type="view", **kwargs):
+def setup(db, index_type="view", partitioned=False, **kwargs):
     db.recreate()
-    db.save_docs(copy.deepcopy(DOCS))
+    p = str(partitioned).lower()
+    docs = copy.deepcopy(DOCS)
+
+    if partitioned:
+        for index, doc in enumerate(docs):
+            partition = index % PARTITIONS
+            doc["_id"] = "{}:{}".format(partition, doc["_id"])
+
+    db.save_docs(docs, partitioned=p)
+
     if index_type == "view":
         add_view_indexes(db, kwargs)
     elif index_type == "text":
@@ -93,13 +97,15 @@ def add_view_indexes(db, kwargs):
         (["twitter"], "twitter"),
         (["ordered"], "ordered"),
     ]
-    for (idx, name) in indexes:
+    for idx, name in indexes:
         assert db.create_index(idx, name=name, ddoc=name) is True
 
 
 def add_text_indexes(db, kwargs):
     db.create_text_index(**kwargs)
 
+
+PARTITIONS = 3
 
 DOCS = [
     {

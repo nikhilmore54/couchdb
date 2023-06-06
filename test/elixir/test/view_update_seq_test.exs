@@ -2,7 +2,6 @@ defmodule ViewUpdateSeqTest do
   use CouchTestCase
 
   @moduletag :view_update_seq
-  @moduletag kind: :single_node
 
   @moduledoc """
   This is a port of the view_update_seq.js test suite.

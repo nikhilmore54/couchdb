@@ -29,7 +29,7 @@ each node maintains and processes an independent set of compactions.
 Each channel has a basic type for the algorithm it uses to select pending
 compactions for its queue and how it prioritises them.
 
-The two queue types are:
+There are a few queue types:
 
 * **ratio**: this uses the ratio `total_bytes / user_bytes` as its driving
 calculation. The result _X_ must be greater than some configurable value _Y_ for a
@@ -45,13 +45,32 @@ calculation of _X_ is described in [Priority calculation](#priority-calculation)
 
 Both algorithms operate on two main measures:
 
-* **user_bytes**: this is the amount of data the user has in the file. It
-doesn't include storage overhead: old revisions, on-disk btree structure and
-so on.
+* **active_bytes**: this is the amount of data used by btree structure and the
+document bodies in the leaves of the revision tree of each document. It
+includes storage overhead, on-disk btree structure but does not include document
+bodies not in leaf nodes. So, for instance, after deleting a document, that
+document's body revision will become an intermediate revision tree node and its
+size won't be relfected in the **active_bytes** ammount.
 
 * **total_bytes**: the size of the file on disk.
 
 Channel type is set using the `priority` configuration setting.
+
+There are also a few special "system" channels:
+
+* **upgrade_dbs** : this is used for enqueuing database shards which need to be
+  upgraded. This may happen after when Apache CouchDB's data format changes.
+
+* **upgrade_views** : channels used for enqueuing views which need to be
+  upgraded. This may happen when view disk format changes, or after operation
+  system's collation library (libicu) major version upgrade. Then, view shard
+  will be enqueued for recompaction, so their rows are re-ordered according the
+  updated rules of the new collation library.
+
+* **cleanup_channels** : currently there is only a single **index_cleanup**
+  channel which is used to enqueue jobs used to remove stale view index files
+  and purge view client checkpoint _local document after design documents get
+  updated.
 
 #### Further configuration options
 
@@ -86,8 +105,8 @@ currently [here][ss].
 
 #### Background Detail
 
-`user_bytes` is called `data_size` in `db_info` blocks. It is the total of all bytes
-that are used to store docs and their attachments.
+`user_bytes` is called `sizes.active` in `db_info` blocks. It is the total of all bytes
+that are used to store docs and their attachments visible in the leaf nodes of document revision trees.
 
 Since `.couch` files are append only, every update adds data to the file. When
 you update a btree, a new leaf node is written and all the nodes back up the
@@ -95,25 +114,15 @@ root. In this update, old data is never overwritten and these parts of the
 file are no longer live; this includes old btree nodes and document bodies.
 Compaction takes this file and writes a new file that only contains live data.
 
-`total_data` is the number of bytes in the file as reported by `ls -al filename`.
-
-#### Flaws
-
-An important flaw in this calculation is that `total_data` takes into account
-the compression of data on disk, whereas `user_bytes` does not. This can give
-unexpected results to calculations, as the values are not directly comparable.
-
-However, it's the best measure we currently have.
-
-[Even more info](https://github.com/apache/couchdb-smoosh#notes-on-the-data_size-value).
-
+`total_data` is the number of bytes in the file as reported by `ls -al
+filename`. In `db_info` response this is the `sizes.file` value.
 
 ### Defining a channel
 
 Defining a channel is done via normal dbcore configuration, with some
 convention as to the parameter names.
 
-Channel configuration is defined using `smoosh.channel_name` top level config
+Channel configuration is defined using `smoosh.{channel-name}` top level config
 options. Defining a channel is just setting the various options you want
 for the channel, then bringing it into smoosh's sets of active channels by
 adding it to either `db_channels` or `view_channels`.
@@ -129,9 +138,14 @@ It's important to choose good channel names. There are some conventional ones:
 * `ratio_views`: a ratio channel for views, usually using the default settings.
 * `slack_views`: a slack channel for views, usually using the default settings.
 
-These four are defined by default if there are no others set ([source][source1]).
+These four are defined by default along with three **system** channel:
 
-[source1]: https://github.com/apache/couchdb-smoosh/blob/master/src/smoosh_server.erl#L75
+* `upgrade_dbs`: update channel for dbs, used when db file format changes
+* `upgrade_views` : update channel for views, used when view file format
+  changes or after the operating system's collation library undergoes a major
+  version change.
+* `index_cleanup` : a single channel in the `cleanup_channels` list used for
+  enqueueing jobs used to clean up stale index files.
 
 And some standard names for ones we often have to add:
 
@@ -146,47 +160,35 @@ along with the other defaults.
 
 ```bash
 # Define the new channel
-(couchdb@db1.foo.bar)3> s:set_config("smoosh.big_dbs", "min_size", "20000000000", global).
+(couchdb@db1.foo.bar)3> rpc:multicall(config, set, ["smoosh.big_dbs", "min_size", "20000000000"]).
 {[ok,ok,ok],[]}
-(couchdb@db1.foo.bar)3> s:set_config("smoosh.big_dbs", "concurrency", "2", global).
+(couchdb@db1.foo.bar)3> rpc:multicall(config, set, ["smoosh.big_dbs", "concurrency", "2"]).
 {[ok,ok,ok],[]}
 
 # Add the channel to the db_channels set -- note we need to get the original
 # value first so we can add the new one to the existing list!
-(couchdb@db1.foo.bar)5> s:get_config("smoosh", "db_channels", global).
-{[{'couchdb@db1.foo.bar',"ratio_dbs"},
-{'couchdb@db3.foo.bar',"ratio_dbs"},
-{'couchdb@db2.foo.bar',"ratio_dbs"}],
-[]}
-(couchdb@db1.foo.bar)6> s:set_config("smoosh", "db_channels", "ratio_dbs,big_dbs", global).
+(couchdb@db1.foo.bar)5> rpc:multicall(config, get, ["smoosh", "db_channels"]).
+{["ratio_dbs","ratio_dbs","ratio_dbs"],[]}
+(couchdb@db1.foo.bar)6> rpc:multicall(config, set, ["smoosh", "db_channels", "ratio_dbs,big_dbs"]).
 {[ok,ok,ok],[]}
 ```
 
 ### Viewing active channels
 
 ```bash
-(couchdb@db3.foo.bar)3> s:get_config("smoosh", "db_channels", global).
-{[{'couchdb@db3.foo.bar',"ratio_dbs,big_dbs"},
-  {'couchdb@db1.foo.bar',"ratio_dbs,big_dbs"},
-  {'couchdb@db2.foo.bar',"ratio_dbs,big_dbs"}],
- []}
-(couchdb@db3.foo.bar)4> s:get_config("smoosh", "view_channels", global).
-{[{'couchdb@db3.foo.bar',"ratio_views"},
-  {'couchdb@db1.foo.bar',"ratio_views"},
-  {'couchdb@db2.foo.bar',"ratio_views"}],
- []}
+(couchdb@db3.foo.bar)3> rpc:multicall(config, get, ["smoosh", "db_channels"]).
+{["ratio_dbs,big_dbs","ratio_dbs,big_dbs","ratio_dbs,big_dbs"],[]}
+(couchdb@db3.foo.bar)4> rpc:multicall(config, get, ["smoosh", "view_channels"]).
+{["ratio_views","ratio_views","ratio_views"],[]}
 ```
 
 ### Removing a channel
 
 ```bash
 # Remove it from the active set
-(couchdb@db1.foo.bar)5> s:get_config("smoosh", "db_channels", global).
-{[{'couchdb@db1.foo.bar',"ratio_dbs,big_dbs"},
-{'couchdb@db3.foo.bar',"ratio_dbs,big_dbs"},
-{'couchdb@db2.foo.bar',"ratio_dbs,big_dbs"}],
-[]}
-(couchdb@db1.foo.bar)6> s:set_config("smoosh", "db_channels", "ratio_dbs", global).
+(couchdb@db1.foo.bar)5> rpc:multicall(config, get, ["smoosh", "db_channels"]).
+{["ratio_dbs,big_dbs", "ratio_dbs,big_dbs", "ratio_dbs,big_dbs"],[]}
+(couchdb@db1.foo.bar)6> rpc:multicall(config, set, ["smoosh", "db_channels", "ratio_dbs"]).
 {[ok,ok,ok],[]}
 
 # Delete the config -- you need to do each value
@@ -201,11 +203,8 @@ along with the other defaults.
 As far as I know, you have to get each setting separately:
 
 ```
-(couchdb@db1.foo.bar)1> s:get_config("smoosh.big_dbs", "concurrency", global).
-{[{'couchdb@db3.foo.bar',"2"},
-  {'couchdb@db1.foo.bar',"2"},
-  {'couchdb@db2.foo.bar',"2"}],
- []}
+(couchdb@db1.foo.bar)1> rpc:multicall(config, get, ["smoosh.big_dbs", "concurrency"]).
+{["2","2","2"],[]}
 
 ```
 
@@ -214,12 +213,11 @@ As far as I know, you have to get each setting separately:
 The same as defining a channel, you just need to set the new value:
 
 ```
-(couchdb@db1.foo.bar)2> s:set_config("smoosh.ratio_dbs", "concurrency", "1", global).
+(couchdb@db1.foo.bar)2> rpc:multicall(config, set, ["smoosh.ratio_dbs", "concurrency", "1"]).
 {[ok,ok,ok],[]}
 ```
 
 It sometimes takes a little while to take affect.
-
 
 
 ## Standard operating procedures
@@ -298,11 +296,8 @@ If it's falling behind (big queues), try increasing compaction priority.
 Smoosh's IOQ priority is controlled via the `ioq` -> `compaction` queue.
 
 ```
-> s:get_config("ioq", "compaction", global).
-{[{'couchdb@db1.foo.bar',undefined},
-  {'couchdb@db2.foo.bar',undefined},
-  {'couchdb@db3.foo.bar',undefined}],
- []}
+> rpc:multicall(config, get, ["ioq", "compaction"]).
+{[undefined,undefined,undefined],[]}
 
 ```
 
@@ -315,7 +310,7 @@ doesn't adversely impact the customer experience. If it will, and
 it's urgent, at least drop them a warning.
 
 ```
-> s:set_config("ioq", "compaction", "0.5", global).
+> rpc:multicall(config, set, ["ioq", "compaction", "0.5"]).
 {[ok,ok,ok],[]}
 ```
 
@@ -338,11 +333,8 @@ higher concurrency.
 The current setting can be seen for a channel like so:
 
 ```
-> s:get_config("smoosh.ratio_dbs", "concurrency", global).
-{[{'couchdb@db1.foo.bar',undefined},
-  {'couchdb@db2.foo.bar',undefined},
-  {'couchdb@db3.foo.bar',undefined}],
- []}
+> rpc:multicall(config, get, ["smoosh.ratio_dbs", "concurrency"]).
+{["2","2","2"], []}
 ```
 
 `undefined` means the default is used.
@@ -354,7 +346,7 @@ but evaluate this based on the current status.
 If we want to increase the ratio_dbs setting:
 
 ```
-> s:set_config("smoosh.ratio_dbs", "concurrency", "2", global).
+> rpc:multicall(config, set, ["smoosh.ratio_dbs", "concurrency", "2"]).
 {[ok,ok,ok],[]}
 ```
 
@@ -384,6 +376,15 @@ smoosh:resume().
 Suspend is currently pretty literal: `erlang:suspend_process(Pid, [unless_suspending])`
 is called for each compaction process in each channel. `resume_process` is called
 for resume.
+
+### Disable a channel
+
+An alternative to pausing a channel is to disable it by setting its concurrency
+value to `"0"`.
+
+```
+rpc:multicall(config, set, ["smoosh.ratio_dbs", "concurrency", "0"]).
+```
 
 ### Restarting Smoosh
 

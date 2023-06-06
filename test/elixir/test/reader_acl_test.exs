@@ -2,7 +2,6 @@ defmodule ReaderACLTest do
   use CouchTestCase
 
   @moduletag :authentication
-  @moduletag kind: :single_node
 
   @users_db_name "custom-users"
   @password "funnybone"

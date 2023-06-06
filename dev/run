@@ -24,6 +24,7 @@ import optparse
 import os
 import posixpath
 import re
+import signal
 import socket
 import subprocess as sp
 import sys
@@ -101,6 +102,7 @@ def setup():
     setup_logging(ctx)
     setup_dirs(ctx)
     check_beams(ctx)
+    check_boot_script(ctx)
     setup_configs(ctx)
     return ctx
 
@@ -115,7 +117,7 @@ def setup_argparse():
 
 
 def get_args_parser():
-    parser = optparse.OptionParser(description="Runs CouchDB 2.0 dev cluster")
+    parser = optparse.OptionParser(description="Runs CouchDB dev cluster")
     parser.add_option(
         "-a",
         "--admin",
@@ -186,6 +188,12 @@ def get_args_parser():
         help="Optional key=val config overrides. Can be repeated",
     )
     parser.add_option(
+        "--erlang-config",
+        dest="erlang_config",
+        default="rel/files/sys.config",
+        help="Specify an alternative Erlang application configuration",
+    )
+    parser.add_option(
         "--degrade-cluster",
         dest="degrade_cluster",
         type=int,
@@ -219,6 +227,27 @@ def get_args_parser():
         default=[],
         help="Path to config to place in 'local.d'. Can be repeated",
     )
+    parser.add_option(
+        "--with-nouveau",
+        dest="with_nouveau",
+        default=False,
+        action="store_true",
+        help="Start Nouveau server",
+    )
+    parser.add_option(
+        "-t",
+        "--enable-tls",
+        dest="enable_tls",
+        default=False,
+        action="store_true",
+        help="Enable custom TLS distribution -- couch",
+    )
+    parser.add_option(
+        "--no-tls",
+        dest="no_tls",
+        default=None,
+        help="Use TCP for specified node when TLS distribution is enabled",
+    )
     return parser
 
 
@@ -241,12 +270,16 @@ def setup_context(opts, args):
         "haproxy": opts.haproxy,
         "haproxy_port": opts.haproxy_port,
         "config_overrides": opts.config_overrides,
+        "erlang_config": opts.erlang_config,
         "no_eval": opts.no_eval,
         "extra_args": opts.extra_args,
         "reset_logs": True,
         "procs": [],
         "auto_ports": opts.auto_ports,
         "locald_configs": opts.locald_configs,
+        "with_nouveau": opts.with_nouveau,
+        "enable_tls": opts.enable_tls,
+        "no_tls": opts.no_tls,
     }
 
 
@@ -268,10 +301,20 @@ def check_beams(ctx):
         sp.check_call(["erlc", "-o", ctx["devdir"] + os.sep, fname])
 
 
+@log("Ensure Erlang boot script exists")
+def check_boot_script(ctx):
+    if not os.path.exists(os.path.join(ctx["devdir"], "devnode.boot")):
+        env = os.environ.copy()
+        env["ERL_LIBS"] = os.path.join(ctx["rootdir"], "src")
+        sp.check_call(["escript", "make_boot_script"], env=env, cwd=ctx["devdir"])
+
+
 @log("Prepare configuration files")
 def setup_configs(ctx):
     for idx, node in enumerate(ctx["nodes"]):
-        cluster_port, backend_port = get_ports(ctx, idx + ctx["node_number"])
+        cluster_port, backend_port, prometheus_port = get_ports(
+            ctx, idx + ctx["node_number"]
+        )
         env = {
             "prefix": toposixpath(ctx["rootdir"]),
             "package_author_name": "The Apache Software Foundation",
@@ -281,10 +324,16 @@ def setup_configs(ctx):
             "view_index_dir": toposixpath(
                 ensure_dir_exists(ctx["devdir"], "lib", node, "data")
             ),
+            "state_dir": toposixpath(
+                ensure_dir_exists(ctx["devdir"], "lib", node, "data")
+            ),
             "node_name": "-name %s@127.0.0.1" % node,
             "cluster_port": cluster_port,
+            "clouseau_name": "clouseau%d@127.0.0.1" % (idx + 1),
             "backend_port": backend_port,
+            "prometheus_port": prometheus_port,
             "uuid": "fake_uuid_for_dev",
+            "with_nouveau": str(ctx["with_nouveau"]).lower(),
             "_default": "",
         }
         write_config(ctx, node, env)
@@ -329,6 +378,7 @@ def generate_haproxy_config(ctx):
 
     with open(haproxy_config, "w") as handle:
         handle.write("\n".join(out))
+        handle.write("\n")
 
 
 def apply_config_overrides(ctx, content):
@@ -344,14 +394,18 @@ def apply_config_overrides(ctx, content):
 def get_ports(ctx, idnode):
     assert idnode
     if idnode <= 5 and not ctx["auto_ports"]:
-        return ((10000 * idnode) + 5984, (10000 * idnode) + 5986)
+        return (
+            (10000 * idnode) + 5984,
+            (10000 * idnode) + 5986,
+            (10000 * idnode) + 7986,
+        )
     else:
         return tuple(get_available_ports(2))
 
 
 def get_available_ports(num):
     ports = []
-    while len(ports) < num:
+    while len(ports) < num + 1:
         with contextlib.closing(
             socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         ) as soc:
@@ -383,6 +437,8 @@ def cluster_port(ctx, n):
 def write_config(ctx, node, env):
     etc_src = os.path.join(ctx["rootdir"], "rel", "overlay", "etc")
     etc_tgt = ensure_dir_exists(ctx["devdir"], "lib", node, "etc")
+    if ctx["enable_tls"]:
+        sp.call(["./src/couch_dist/gen_certs"], cwd=ctx["rootdir"])
 
     for fname in glob.glob(os.path.join(etc_src, "*")):
         base = os.path.basename(fname)
@@ -402,6 +458,8 @@ def write_config(ctx, node, env):
             content = apply_config_overrides(ctx, content)
         elif base == "local.ini":
             content = hack_local_ini(ctx, content)
+        elif ctx["enable_tls"] and base == "vm.args":
+            content = hack_vm_args(ctx, node, content)
 
         with open(tgt, "w") as handle:
             handle.write(content)
@@ -424,8 +482,32 @@ def boot_haproxy(ctx):
     )
 
 
-def hack_default_ini(ctx, node, contents):
+def boot_nouveau(ctx):
+    if not ctx["with_nouveau"]:
+        return
 
+    version = "1.0-SNAPSHOT"
+    cmd = [
+        "java",
+        "-server",
+        "-jar",
+        "build/libs/server-%s-dist.jar" % version,
+        "server",
+        "nouveau.yaml",
+    ]
+    logfname = os.path.join(ctx["devdir"], "logs", "nouveau.log")
+    log = open(logfname, "w")
+    return sp.Popen(
+        " ".join(cmd),
+        cwd="nouveau",
+        shell=True,
+        stdin=sp.PIPE,
+        stdout=log,
+        stderr=sp.STDOUT,
+    )
+
+
+def hack_default_ini(ctx, node, contents):
     contents = re.sub(
         "^\[httpd\]$",
         "[httpd]\nenable = true",
@@ -445,15 +527,10 @@ def hack_default_ini(ctx, node, contents):
 
 
 def hack_local_ini(ctx, contents):
-    # make sure all three nodes have the same secret
-    secret_line = "secret = %s\n" % COMMON_SALT
-    previous_line = "; require_valid_user = false\n"
-    contents = contents.replace(previous_line, previous_line + secret_line)
-
     if ctx["with_admin_party"]:
         os.environ["COUCHDB_TEST_ADMIN_PARTY_OVERRIDE"] = "1"
         ctx["admin"] = ("Admin Party!", "You do not need any password.")
-        return contents
+        return contents + "\n\n[chttpd_auth]\nsecret = %s\n" % COMMON_SALT
 
     # handle admin credentials passed from cli or generate own one
     if ctx["admin"] is None:
@@ -461,7 +538,24 @@ def hack_local_ini(ctx, contents):
     else:
         user, pswd = ctx["admin"]
 
-    return contents + "\n%s = %s" % (user, hashify(pswd))
+    # this relies on [admin] being the last section at the end of the file
+    contents = contents + "\n%s = %s" % (user, hashify(pswd))
+
+    return contents + "\n\n[chttpd_auth]\nsecret = %s\n" % COMMON_SALT
+
+
+def hack_vm_args(ctx, node, contents):
+    contents += f"""
+-proto_dist couch
+-couch_dist no_tls '"clouseau{node[-1]}@127.0.0.1"'
+-ssl_dist_optfile {ctx["rootdir"]}/src/couch_dist/certs/out/couch_dist.conf
+    """
+    if ctx["no_tls"]:
+        no_tls_nodes = ctx["no_tls"].split(",")
+        for node_name in no_tls_nodes:
+            node_name = node_name if "@" in node_name else f"{node_name}@127.0.0.1"
+            contents += f"""\n-couch_dist no_tls '"{node_name}"'"""
+    return contents
 
 
 def gen_password():
@@ -485,6 +579,11 @@ def hashify(pwd, salt=COMMON_SALT, iterations=10, keylen=20):
 
 
 def startup(ctx):
+    def handler(signalno, frame):
+        kill_processes(ctx)
+        sys.exit()
+
+    signal.signal(signal.SIGTERM, handler)
     atexit.register(kill_processes, ctx)
     boot_nodes(ctx)
     ensure_all_nodes_alive(ctx)
@@ -501,7 +600,8 @@ def startup(ctx):
 def kill_processes(ctx):
     for proc in ctx["procs"]:
         if proc and proc.returncode is None:
-            proc.kill()
+            proc.terminate()
+    ctx["procs"] = []
 
 
 def degrade_cluster(ctx):
@@ -515,7 +615,7 @@ def degrade_cluster(ctx):
         ctx["procs"].append(haproxy_proc)
 
 
-@log("Stoping proc {proc.pid}")
+@log("Stopping proc {proc.pid}")
 def kill_process(proc):
     if proc and proc.returncode is None:
         proc.kill()
@@ -527,6 +627,9 @@ def boot_nodes(ctx):
     haproxy_proc = boot_haproxy(ctx)
     if haproxy_proc is not None:
         ctx["procs"].append(haproxy_proc)
+    nouveau_proc = boot_nouveau(ctx)
+    if nouveau_proc is not None:
+        ctx["procs"].append(nouveau_proc)
 
 
 def ensure_all_nodes_alive(ctx):
@@ -569,7 +672,6 @@ def check_node_alive(url):
 
 
 def set_boot_env(ctx):
-
     # fudge fauxton path
     if os.path.exists("src/fauxton/dist/release"):
         fauxton_root = "src/fauxton/dist/release"
@@ -592,10 +694,9 @@ def set_boot_env(ctx):
 
 @log("Start node {node}")
 def boot_node(ctx, node):
-    erl_libs = os.path.join(ctx["rootdir"], "src")
     set_boot_env(ctx)
     env = os.environ.copy()
-    env["ERL_LIBS"] = os.pathsep.join([erl_libs])
+    env["ERL_LIBS"] = os.path.join(ctx["rootdir"], "src")
 
     node_etcdir = os.path.join(ctx["devdir"], "lib", node, "etc")
     reldir = os.path.join(ctx["rootdir"], "rel")
@@ -605,7 +706,7 @@ def boot_node(ctx, node):
         "-args_file",
         os.path.join(node_etcdir, "vm.args"),
         "-config",
-        os.path.join(reldir, "files", "sys"),
+        os.path.join(ctx["rootdir"], ctx["erlang_config"]),
         "-couch_ini",
         os.path.join(node_etcdir, "default.ini"),
         os.path.join(node_etcdir, "local.ini"),
@@ -614,11 +715,12 @@ def boot_node(ctx, node):
         os.path.join(reldir, "reltool.config"),
         "-parent_pid",
         str(os.getpid()),
+        "-boot",
+        os.path.join(ctx["devdir"], "devnode"),
         "-pa",
         ctx["devdir"],
+        "-s monitor_parent",
     ]
-    cmd += [p[:-1] for p in glob.glob(erl_libs + "/*/")]
-    cmd += ["-s", "boot_node"]
     if ctx["reset_logs"]:
         mode = "wb"
     else:

@@ -452,13 +452,8 @@ Array related operators
 
 Misc related operators
 
-* "$mod" - [Divisor, Remainder], where Divisor and Remainder are both
-  positive integers (ie, greater than 0). Matches documents where
-  (field % Divisor == Remainder) is true. This is false for any
-  non-integer field
-* "$regex" - string, a regular expression pattern to match against the
-  document field. Only matches when the field is a string value and
-  matches the supplied matches
+* "$mod" - [Divisor, Remainder], where Divisor is a non-zero integer and Remainder is any integer. Matches documents where (field % Divisor == Remainder) is true.  This is false for any non-integer field
+* "$regex" - string, a regular expression pattern to match against the document field. Only matches when the field is a string value and matches the supplied matches
 
 
 Update Syntax

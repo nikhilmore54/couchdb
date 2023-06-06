@@ -2,7 +2,6 @@ defmodule RevStemmingTest do
   use CouchTestCase
 
   @moduletag :revs
-  @moduletag kind: :single_node
 
   @moduledoc """
   This is a port of the rev_stemming.js suite

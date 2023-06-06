@@ -1,4 +1,5 @@
-%% -*- erlang -*-
+% vim: set ft=erlang : -*- erlang -*- % Magic lines for code editors
+
 % Licensed under the Apache License, Version 2.0 (the "License"); you may not
 % use this file except in compliance with the License. You may obtain a copy of
 % the License at
@@ -26,7 +27,6 @@ VerString = case Version of
 end.
 VerList = lists:map(fun(X) -> {Int, _} = string:to_integer(X), Int end,
     string:tokens(VerString, ".")).
-
 
 DisplayMsg = fun(Msg, Args) ->
     Base = iolist_to_binary(io_lib:format(Msg, Args)),
@@ -81,14 +81,8 @@ BadErlang = fun(Ver) ->
 end.
 
 case VerList of
-    [OldVer | _] when OldVer < 19 -> ErlangTooOld(VerString);
-
-    [19 | _] -> NotSupported(VerString);
-
-    [20 | _] = V20 when V20 < [20, 3, 8, 11] -> BadErlang(VerString);
-    [21 | _] = V21 when V21 < [21, 2, 3] -> BadErlang(VerString);
-    [22, 0, N | _] when N < 5 -> BadErlang(VerString);
-
+    % Leave example around if we have to exlude specific versions
+    % [22, 0, N | _] when N < 5 -> BadErlang(VerString);
     _ -> ok
 end.
 
@@ -114,7 +108,12 @@ os:putenv("COUCHDB_APPS_CONFIG_DIR", filename:join([COUCHDB_ROOT, "rel/apps"])).
 SubDirs = [
     %% must be compiled first as it has a custom behavior
     "src/couch_epi",
+    "src/config",
     "src/couch_log",
+    "src/khash",
+    "src/b64url",
+    "src/exxhash",
+    "src/ets_lru",
     "src/chttpd",
     "src/couch",
     "src/couch_event",
@@ -122,13 +121,15 @@ SubDirs = [
     "src/couch_index",
     "src/couch_mrview",
     "src/couch_replicator",
-    "src/couch_plugins",
     "src/couch_pse_tests",
     "src/couch_stats",
     "src/couch_peruser",
     "src/couch_tests",
+    "src/couch_dist",
+    "src/custodian",
     "src/ddoc_cache",
     "src/dreyfus",
+    "src/nouveau",
     "src/fabric",
     "src/global_changes",
     "src/ioq",
@@ -138,37 +139,33 @@ SubDirs = [
     "src/rexi",
     "src/setup",
     "src/smoosh",
+    "src/weatherreport",
+    "src/couch_prometheus",
     "rel"
 ].
 
 DepDescs = [
 %% Independent Apps
-{config,           "config",           {tag, "2.1.7"}},
-{b64url,           "b64url",           {tag, "1.0.2"}},
-{ets_lru,          "ets-lru",          {tag, "1.1.0"}},
-{khash,            "khash",            {tag, "1.1.0"}},
-{snappy,           "snappy",           {tag, "CouchDB-1.0.4"}},
+{snappy,           "snappy",           {tag, "CouchDB-1.0.9"}},
 
-%% Non-Erlang deps
-{docs,             {url, "https://github.com/apache/couchdb-documentation"},
-                   {tag, "3.1.0-RC1"}, [raw]},
+%% %% Non-Erlang deps
 {fauxton,          {url, "https://github.com/apache/couchdb-fauxton"},
-                   {tag, "v1.2.4"}, [raw]},
+                   {tag, "v1.2.9"}, [raw]},
 %% Third party deps
-{folsom,           "folsom",           {tag, "CouchDB-0.8.3"}},
-{hyper,            "hyper",            {tag, "CouchDB-2.2.0-6"}},
-{ibrowse,          "ibrowse",          {tag, "CouchDB-4.0.1-1"}},
-{jiffy,            "jiffy",            {tag, "CouchDB-1.0.4-1"}},
-{mochiweb,         "mochiweb",         {tag, "v2.20.0"}},
-{meck,             "meck",             {tag, "0.8.8"}},
-{recon,            "recon",            {tag, "2.5.0"}}
+{folsom,           "folsom",           {tag, "CouchDB-0.8.4"}},
+{hyper,            "hyper",            {tag, "CouchDB-2.2.0-7"}},
+{ibrowse,          "ibrowse",          {tag, "CouchDB-4.4.2-5"}},
+{jiffy,            "jiffy",            {tag, "CouchDB-1.0.9-2"}},
+{mochiweb,         "mochiweb",         {tag, "v3.1.1"}},
+{meck,             "meck",             {tag, "0.9.2"}},
+{recon,            "recon",            {tag, "2.5.3"}}
 ].
 
 WithProper = lists:keyfind(with_proper, 1, CouchConfig) == {with_proper, true}.
 
 OptionalDeps = case WithProper of
     true ->
-        [{proper, {url, "https://github.com/proper-testing/proper"}, {tag, "v1.3"}}];
+        [{proper, {url, "https://github.com/proper-testing/proper"}, {tag, "v1.4"}}];
     false ->
         []
 end.
@@ -188,19 +185,17 @@ MakeDep = fun
         {AppName, ".*", {git, Url, Version}, Options}
 end.
 
-ErlOpts = case os:getenv("ERL_OPTS") of
-    false -> [];
-    Opts -> [list_to_atom(O) || O <- string:tokens(Opts, ",")]
-end.
-
 AddConfig = [
-    {require_otp_vsn, "19|20|21|22"},
+    {cover_enabled, true},
+    {cover_print_enabled, true},
+    {require_otp_vsn, "24|25|26"},
     {deps_dir, "src"},
     {deps, lists:map(MakeDep, DepDescs ++ OptionalDeps)},
     {sub_dirs, SubDirs},
     {lib_dirs, ["src"]},
-    {erl_opts, [{i, "../"} | ErlOpts]},
+    {erl_opts, [{i, "../"}, {d, 'COUCHDB_ERLANG_VERSION', VerString}]},
     {eunit_opts, [verbose, {report,{eunit_surefire,[{dir,"."}]}}]},
+    {xref_checks, [undefined_function_calls, undefined_functions]},
     {plugins, [eunit_plugin]},
     {dialyzer, [
         {plt_location, local},
@@ -212,6 +207,11 @@ AddConfig = [
     {post_hooks, [{compile, "escript support/build_js.escript"}]}
 ].
 
-C = lists:foldl(fun({K, V}, CfgAcc) ->
-    lists:keystore(K, 1, CfgAcc, {K, V})
+lists:foldl(fun({K, V}, CfgAcc) ->
+    case lists:keyfind(K, 1, CfgAcc) of
+        {K, Existent} when is_list(Existent) andalso is_list(V) ->
+            lists:keystore(K, 1, CfgAcc, {K, Existent ++ V});
+        false ->
+            lists:keystore(K, 1, CfgAcc, {K, V})
+    end
 end, CONFIG, AddConfig).

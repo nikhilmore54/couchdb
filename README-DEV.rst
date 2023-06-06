@@ -1,9 +1,9 @@
 Apache CouchDB DEVELOPERS
 =========================
 
-Before you start here, read `INSTALL.Unix` (or `INSTALL.Windows`) and
-follow the setup instructions including the installation of all the
-listed dependencies for your system.
+Before you start here, read `<INSTALL.Unix.md>`_ (or
+`<INSTALL.Windows.md>`_) and follow the setup instructions including
+the installation of all the listed dependencies for your system.
 
 Only follow these instructions if you are building from a source checkout.
 
@@ -15,6 +15,7 @@ Dependencies
 You need the following to run tests:
 
 * `Python 3               <https://www.python.org/>`_
+* `Elixir                 <https://elixir-lang.org/>`_
 
 You need the following optionally to build documentation:
 
@@ -30,7 +31,7 @@ You need the following optionally to build releases:
 You need the following optionally to build Fauxton:
 
 * `nodejs                 <http://nodejs.org/>`_
-* `npm                    <https://www.npmjs.com/>`_               
+* `npm                    <https://www.npmjs.com/>`_
 
 You will need these optional dependencies installed if:
 
@@ -45,11 +46,45 @@ However, you do not need them if:
 If you intend to build Fauxton, you will also need to install its
 dependencies. After running ``./configure`` to download all of the
 dependent repositories, you can read about required dependencies in
-`src/fauxton/readme.md`. Typically, installing npm and node.js are
-sufficient to enable a Fauxton build.
+`its readme
+<https://github.com/apache/couchdb-fauxton/blob/main/readme.md>`_. Typically,
+installing ``npm`` and node.js are sufficient to enable a Fauxton
+build.
 
 Here is a list of *optional* dependencies for various operating systems.
 Installation will be easiest, when you install them all.
+
+Docker
+~~~~~~
+
+CouchDB maintains a ``Dockerfile`` based on Debian that includes all
+the dependencies noted above in the `.devcontainer <https://github.com/apache/couchdb/tree/main/.devcontainer>`_
+folder.
+
+The ``Dockerfile`` can be used on its own, or together with the
+associated ``devcontainer.json`` file to quickly provision a
+development environment using `GitHub Codespaces <https://github.com/features/codespaces>`_
+or `Visual Studio Code <https://code.visualstudio.com/docs/remote/containers>`_.
+
+
+.. image:: https://img.shields.io/static/v1?label=Remote%20-%20Containers&message=Open&color=blue&logo=visualstudiocode
+    :target: https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/apache/couchdb
+
+If you already have VS Code and Docker installed, you can click the
+badge above or `here
+<https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/apache/couchdb>`_
+to get started. Clicking these links will cause VS Code to
+automatically install the Remote - Containers extension if needed,
+clone the source code into a container volume, and spin up a dev
+container for use.
+
+This ``devcontainer`` will automatically run ``./configure && make``
+the first time it is created.  While this may take some extra time to
+spin up, this tradeoff means you will be able to run things like
+``./dev/run``, ``./dev/run --admin=admin:admin``, ``./dev/run
+--with-admin-party-please``, and ``make check`` straight away.
+Subsequent startups should be quick.
+
 
 Debian-based (inc. Ubuntu) Systems
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -79,8 +114,7 @@ Centos 7 and RHEL 7
 Mac OS X
 ~~~~~~~~
 
-Install `Homebrew <https://github.com/mxcl/homebrew>`_, if you do not have 
-it already.
+Install `Homebrew <https://brew.sh/>`_, if you do not have it already.
 
 Unless you want to install the optional dependencies, skip to the next section.
 
@@ -107,8 +141,9 @@ FreeBSD
 Windows
 ~~~~~~~
 
-Follow the instructions in `INSTALL.Windows` and build all components from
-source, using the same Visual C++ compiler and runtime.
+Follow the instructions in `<INSTALL.Windows.md>`_ and build all
+components from source, using the same Visual C++ compiler and
+runtime.
 
 Configuring
 -----------
@@ -127,6 +162,27 @@ ignore their build and avoid any issues with their dependencies.
 
 See ``./configure --help`` for more information.
 
+Developing
+----------
+
+Formatting
+~~~~~~~~~~
+
+The ``erl`` files in ``src`` are formatted using erlfmt_. The checks are run
+for every PR in the CI. To run the checks locally, run ``make erlfmt-check``.
+To format the ``erl`` files in ``src``, run ``make erlfmt-format``.
+To use ``erlfmt`` for specific files only, use the executable ``bin/erlfmt``
+that is installed by ``configure``.
+
+Python files throughout the repository should conform to (PEP
+8-compliant) formatting rules as specified by black_.  Similarly to
+``erlfmt``, the related checks are run for every PR in the CI.  The
+same checks could also be run locally via ``make python-black``.
+Files can be automatically formatted by ``make python-black-update``.
+
+.. _erlfmt: https://github.com/WhatsApp/erlfmt
+.. _black: https://github.com/psf/black
+
 Testing
 -------
 
@@ -134,11 +190,16 @@ To run all the tests use run::
 
     make check
 
-You can also run each test suite individually via ``eunit`` and ``javascript``
-targets::
+You can also run each test suite individually via the ``eunit``, ``mango-test``,
+``elixir-suite``, and ``weatherreport-test`` targets::
 
     make eunit
-    make javascript
+    make mango-test
+    make elixir-suite
+    make weatherreport-test
+
+Erlang Unit Tests
+~~~~~~~~~~~~~~~~~
 
 If you need to run specific Erlang tests, you can pass special "options"
 to make targets::
@@ -155,32 +216,64 @@ to make targets::
     # Ignore tests for specified apps
     make eunit skip_deps=couch_log,couch_epi
 
-The ``apps``, ``suites``, ``tests`` and ``skip_deps`` could be combined in any 
-way. These are mimics to ``rebar eunit`` arguments. If you're not satisfied by 
-these, you can use EUNIT_OPT environment variable to specify exact `rebar eunit`
-options::
+The ``apps``, ``suites``, ``tests`` and ``skip_deps`` could be
+combined in any way. These are mimics to ``rebar eunit`` arguments. If
+you're not satisfied by these, you can use the ``EUNIT_OPTS`` variable
+to specify exact ``rebar eunit`` options::
 
     make eunit EUNIT_OPTS="apps=couch,chttpd"
 
-JavaScript tests accepts only `suites` option, but in the same way::
+Elixir Integration Tests
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-    # Run all JavaScript tests
-    make javascript
+All the Elixir-based integration tests could be by the `elixir-suite`
+target::
 
-    # Run only basic and design_options tests
-    make javascript suites="basic design_options"
+    make elixir-suite
 
-    # Ignore specific test suites via command line
-    make javascript ignore_js_suites="all_docs bulk_docs"
+There is an additional suite for Dreyfus, which is not run
+automatically by either the ``elixir-suite`` or the ``check`` target
+but it could be done manually via the corresponding target::
 
-    # Ignore specific test suites in makefile
-    ignore_js_suites=all_docs,bulk_docs
+    make elixir-search
 
-Note that tests on the command line are delimited here by whitespace,
-not by comma.You can get list of all possible test targets with the
-following command::
+Note that this requires a running Clouseau instance with the name
+``clouseau@127.0.0.1``.  The easiest way to get it is to clone the
+`cloudant-labs/clouseau <https://github.com/cloudant-labs/clouseau>`_
+repository and launch it run there once all the prerequisites (JDK,
+Scala, and Maven) have been installed successfully, e.g.::
 
-    make list-js-suites
+    git clone https://github.com/cloudant-labs/clouseau
+    mvn -f clouseau/pom.xml scala:run
+
+Mango Integration Tests
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Tests for the Mango interface can be run individually with the help of
+the ``mango-test`` target and they can be narrowed down to specific
+test suites via the ``MANGO_TEST_OPTS`` variable::
+
+    make mango-test \
+      MANGO_TEST_OPTS="--pretty-assert --verbose 03-operator-test"
+
+The value of the ``MANGO_TEST_OPTS`` variable will be passed down to
+the `Nose 2 <https://nose2.io/>`_ testing framework which is used for
+the implementation.  Consult its documentation for more information.
+
+Tests that rely on text indexes are run only if the ``search`` feature
+is reported to be available (i.e. a working Clouseau instance is
+connected), otherwise they will be skipped.
+
+Note that the databases that are created during the tests will be all
+removed after each of the suites completed.  However, with the help of
+the ``MANGO_TESTS_KEEP_DBS`` environment variable, it can be requested
+to keep those databases around for further investigation::
+
+    MANGO_TESTS_KEEP_DBS=please \
+      make mango-test MANGO_TEST_OPTS='03-operator-test'
+
+Static Code Analysis
+~~~~~~~~~~~~~~~~~~~~
 
 Code analyzer could be run by::
 
@@ -193,7 +286,8 @@ If you need to analyze only specific apps, you can specify them in familiar way
 
 See ``make help`` for more info and useful commands.
 
-Please report any problems to the developer's mailing list.
+Please report any problems to the `developer's mailing list
+<https://lists.apache.org/list.html?dev@couchdb.apache.org>`_.
 
 Releasing
 ---------
@@ -217,13 +311,13 @@ built by running::
 
     make release
 
-The release can then be found in the rel/couchdb directory.
+The release can then be found in the ``rel/couchdb`` directory.
 
 Microsoft Windows
 ~~~~~~~~~~~~~~~~~
 
 The release tarball and Erlang CouchDB release commands work on
 Microsoft Windows the same as they do on Unix-like systems. To create
-a full installer, the separate couchdb-glazier repository is required.
-Full instructions are available in that repository's README file.
-
+a full installer, the separate `couchdb-glazier repository
+<https://github.com/apache/couchdb-glazier>`_ is required.  Full
+instructions are available in that repository's ``README`` file.

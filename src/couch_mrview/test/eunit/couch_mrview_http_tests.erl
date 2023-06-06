@@ -15,14 +15,52 @@
 -include_lib("couch/include/couch_eunit.hrl").
 -include_lib("couch_mrview/include/couch_mrview.hrl").
 
-
 mrview_http_test_() ->
     [
-         ?_assertEqual(#mrargs{group_level=undefined, group=true},
-                       couch_mrview_http:parse_params([{"group", "true"}],
-                                            undefined, #mrargs{})),
+        ?_assertEqual(
+            #mrargs{group_level = undefined, group = true},
+            couch_mrview_http:parse_params(
+                [{"group", "true"}],
+                undefined,
+                #mrargs{}
+            )
+        ),
 
-         ?_assertEqual(#mrargs{group_level=1, group=undefined},
-                       couch_mrview_http:parse_params([{"group_level", "1"}],
-                                            undefined, #mrargs{}))
+        ?_assertEqual(
+            #mrargs{group_level = 1, group = undefined},
+            couch_mrview_http:parse_params(
+                [{"group_level", "1"}],
+                undefined,
+                #mrargs{}
+            )
+        ),
+
+        ?_assertEqual(
+            #mrargs{start_key = 1, end_key = 1, group_level = undefined, group = undefined},
+            couch_mrview_http:parse_params(
+                [{"key", "1"}],
+                undefined,
+                #mrargs{}
+            )
+        ),
+
+        ?_assertEqual(
+            #mrargs{start_key = 1, end_key = 1, group_level = undefined},
+            couch_mrview_http:parse_params(
+                [{"keys", "[1]"}],
+                undefined,
+                #mrargs{}
+            )
+        ),
+
+        ?_assertEqual(
+            #mrargs{
+                keys = [1, 2], start_key = undefined, end_key = undefined, group_level = undefined
+            },
+            couch_mrview_http:parse_params(
+                [{"keys", "[1, 2]"}],
+                undefined,
+                #mrargs{}
+            )
+        )
     ].

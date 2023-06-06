@@ -2,7 +2,6 @@ defmodule JsonpTest do
   use CouchTestCase
 
   @moduletag :jsonp
-  @moduletag kind: :single_node
 
   @tag :with_db
   test "jsonp not configured callbacks", context do
@@ -20,7 +19,7 @@ defmodule JsonpTest do
 
     server_config = [
       %{
-        :section => "httpd",
+        :section => "chttpd",
         :key => "allow_jsonp",
         :value => "true"
       }
@@ -51,7 +50,7 @@ defmodule JsonpTest do
 
     server_config = [
       %{
-        :section => "httpd",
+        :section => "chttpd",
         :key => "allow_jsonp",
         :value => "true"
       }

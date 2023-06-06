@@ -23,17 +23,22 @@ import user_docs
 import limit_docs
 
 
+COUCH_HOST = "http://127.0.0.1:15984"
+COUCH_USER = os.environ.get("COUCH_USER")
+COUCH_PASS = os.environ.get("COUCH_PASS")
+
+
 def random_db_name():
     return "mango_test_" + uuid.uuid4().hex
 
 
 def has_text_service():
-    return os.environ.get("MANGO_TEXT_INDEXES") == "1"
+    features = requests.get(COUCH_HOST).json()["features"]
+    return "search" in features
 
 
-def get_from_environment(key, default):
-    value = os.environ.get(key)
-    return value if value is not None else default
+def clean_up_dbs():
+    return not os.environ.get("MANGO_TESTS_KEEP_DBS")
 
 
 # add delay functionality
@@ -46,58 +51,48 @@ class Database(object):
     def __init__(
         self,
         dbname,
-        host="127.0.0.1",
-        port="15984",
-        user="testuser",
-        password="testpass",
     ):
-        root_url = get_from_environment("COUCH_HOST", "http://{}:{}".format(host, port))
-        auth_header = get_from_environment("COUCH_AUTH_HEADER", None)
-        user = get_from_environment("COUCH_USER", user)
-        password = get_from_environment("COUCH_PASSWORD", password)
-
-        self.root_url = root_url
         self.dbname = dbname
         self.sess = requests.session()
-
-        # allow explicit auth header to be set to enable testing
-        # against deployments where basic auth isn't available
-        if auth_header is not None:
-            self.sess.headers["Authorization"] = auth_header
-        else:
-            self.sess.auth = (user, password)
-
+        self.sess.auth = (COUCH_USER, COUCH_PASS)
         self.sess.headers["Content-Type"] = "application/json"
 
     @property
     def url(self):
-        return "{}/{}".format(self.root_url, self.dbname)
+        return "{}/{}".format(COUCH_HOST, self.dbname)
 
     def path(self, parts):
         if isinstance(parts, ("".__class__, "".__class__)):
             parts = [parts]
         return "/".join([self.url] + parts)
 
-    def create(self, q=1, n=1):
+    def create(self, q=1, n=1, partitioned=False):
         r = self.sess.get(self.url)
         if r.status_code == 404:
-            r = self.sess.put(self.url, params={"q": q, "n": n})
+            p = str(partitioned).lower()
+            r = self.sess.put(self.url, params={"q": q, "n": n, "partitioned": p})
             r.raise_for_status()
 
     def delete(self):
         r = self.sess.delete(self.url)
 
     def recreate(self):
-        r = self.sess.get(self.url)
-        if r.status_code == 200:
-            db_info = r.json()
-            docs = db_info["doc_count"] + db_info["doc_del_count"]
-            if docs == 0:
-                # db never used - create unnecessary
-                return
-            self.delete()
-        self.create()
-        self.recreate()
+        NUM_TRIES = 10
+
+        for k in range(NUM_TRIES):
+            r = self.sess.get(self.url)
+            if r.status_code == 200:
+                db_info = r.json()
+                docs = db_info["doc_count"] + db_info["doc_del_count"]
+                if docs == 0:
+                    # db exists and it is empty -- exit condition is met
+                    return
+                self.delete()
+            self.create()
+            time.sleep(k * 0.1)
+        raise Exception(
+            "Failed to recreate the database after {} tries".format(NUM_TRIES)
+        )
 
     def save_doc(self, doc):
         self.save_docs([doc])
@@ -252,6 +247,7 @@ class Database(object):
         return_raw=False,
         update=True,
         executionStats=False,
+        partition=None,
     ):
         body = {
             "selector": selector,
@@ -272,10 +268,14 @@ class Database(object):
         if executionStats == True:
             body["execution_stats"] = True
         body = json.dumps(body)
-        if explain:
-            path = self.path("_explain")
+        if partition:
+            ppath = "_partition/{}/".format(partition)
         else:
-            path = self.path("_find")
+            ppath = ""
+        if explain:
+            path = self.path("{}_explain".format(ppath))
+        else:
+            path = self.path("{}_find".format(ppath))
         r = self.sess.post(path, data=body)
         r.raise_for_status()
         if explain or return_raw:
@@ -301,7 +301,8 @@ class UsersDbTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(klass):
-        user_docs.teardown_users(klass.db)
+        if clean_up_dbs():
+            klass.db.delete()
 
     def setUp(self):
         self.db = self.__class__.db
@@ -309,9 +310,14 @@ class UsersDbTests(unittest.TestCase):
 
 class DbPerClass(unittest.TestCase):
     @classmethod
-    def setUpClass(klass):
+    def setUpClass(klass, partitioned=False):
         klass.db = Database(random_db_name())
-        klass.db.create(q=1, n=1)
+        klass.db.create(q=1, n=1, partitioned=partitioned)
+
+    @classmethod
+    def tearDownClass(klass):
+        if clean_up_dbs():
+            klass.db.delete()
 
     @classmethod
     def tearDownClass(klass):
@@ -328,6 +334,15 @@ class UserDocsTests(DbPerClass):
     def setUpClass(klass):
         super(UserDocsTests, klass).setUpClass()
         user_docs.setup(klass.db)
+
+
+class PartitionedUserDocsTests(DbPerClass):
+    INDEX_TYPE = "json"
+
+    @classmethod
+    def setUpClass(klass):
+        super(PartitionedUserDocsTests, klass).setUpClass(partitioned=True)
+        user_docs.setup(klass.db, partitioned=True)
 
 
 class UserDocsTestsNoIndexes(DbPerClass):

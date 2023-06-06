@@ -34,8 +34,8 @@ main([]) ->
     end,
 
     JsFiles =  [
-        "share/server/json2.js",
         "share/server/dreyfus.js",
+        "share/server/nouveau.js",
         "share/server/filter.js",
         "share/server/mimeparse.js",
         "share/server/render.js",
@@ -47,8 +47,8 @@ main([]) ->
     ],
 
     CoffeeFiles = [
-        "share/server/json2.js",
         "share/server/dreyfus.js",
+        "share/server/nouveau.js",
         "share/server/filter.js",
         "share/server/mimeparse.js",
         "share/server/render.js",
@@ -65,19 +65,15 @@ main([]) ->
             [
                 "share/server/rewrite_fun.js"
             ];
-        "60" ->
+        _ ->
             [
                 "share/server/60/esprima.js",
-                "share/server/60/escodegen.js",
-                "share/server/60/rewrite_fun.js"
-            ];
-        "68" ->
-            [
-                "share/server/60/esprima.js",
-                "share/server/60/escodegen.js",
-                "share/server/60/rewrite_fun.js"
+                "share/server/60/escodegen.js"
             ]
     end,
+
+    RewriteFunFile = ["share/server/60/rewrite_fun.js"],
+    RewriteFunWithASTBypassFile = ["share/server/60/rewrite_fun_ast_bypass.js"],
 
     Pre = "(function () {\n",
     Post = "})();\n",
@@ -91,6 +87,13 @@ main([]) ->
             file:write_file(To, FinalBin)
     end,
 
-    ok = Concat(ExtraFiles ++ JsFiles, "share/server/main.js"),
+    case SMVsn of
+        "1.8.5" ->
+            ok = Concat(ExtraFiles ++ JsFiles, "share/server/main.js"),
+            ok = Concat(ExtraFiles ++ JsFiles, "share/server/main-ast-bypass.js");
+        _ ->
+            ok = Concat(RewriteFunFile ++ ExtraFiles ++ JsFiles, "share/server/main.js"),
+            ok = Concat(RewriteFunWithASTBypassFile ++ ExtraFiles ++ JsFiles, "share/server/main-ast-bypass.js")
+    end,
     ok = Concat(ExtraFiles ++ CoffeeFiles, "share/server/main-coffee.js"),
     ok.

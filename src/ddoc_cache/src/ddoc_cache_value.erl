@@ -12,16 +12,15 @@
 
 -module(ddoc_cache_value).
 
-
 -export([
     wrap/1,
     unwrap/1
 ]).
 
+-include_lib("couch/include/couch_db.hrl").
 
 wrap(Value) ->
-    {?MODULE, term_to_binary(Value)}.
-
+    {?MODULE, ?term_to_bin(Value)}.
 
 unwrap({?MODULE, Bin}) when is_binary(Bin) ->
     binary_to_term(Bin).

@@ -2,7 +2,6 @@ defmodule RecreateDocTest do
   use CouchTestCase
 
   @moduletag :recreate_doc
-  @moduletag kind: :single_node
 
   @moduledoc """
   Test CouchDB document recreation

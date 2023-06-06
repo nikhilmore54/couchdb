@@ -24,14 +24,14 @@ insert(DbName, {Tree0, Dict0}) ->
 
 update(DbName, {Tree0, Dict0}) ->
     case dict:find(DbName, Dict0) of
-    {ok, Old} ->
-        New = couch_util:unique_monotonic_integer(),
-        Tree = gb_trees:insert(New, DbName, gb_trees:delete(Old, Tree0)),
-        Dict = dict:store(DbName, New, Dict0),
-        {Tree, Dict};
-    error ->
-        % We closed this database before processing the update.  Ignore
-        {Tree0, Dict0}
+        {ok, Old} ->
+            New = couch_util:unique_monotonic_integer(),
+            Tree = gb_trees:insert(New, DbName, gb_trees:delete(Old, Tree0)),
+            Dict = dict:store(DbName, New, Dict0),
+            {Tree, Dict};
+        error ->
+            % We closed this database before processing the update.  Ignore
+            {Tree0, Dict0}
     end.
 
 %% Attempt to close the oldest idle database.
@@ -43,22 +43,24 @@ close({Tree, _} = Cache) ->
 close_int(none, _) ->
     false;
 close_int({Lru, DbName, Iter}, {Tree, Dict} = Cache) ->
-    case ets:update_element(couch_dbs, DbName, {#entry.lock, locked}) of
-    true ->
-        [#entry{db = Db, pid = Pid}] = ets:lookup(couch_dbs, DbName),
-        case couch_db:is_idle(Db) of true ->
-            true = ets:delete(couch_dbs, DbName),
-            true = ets:delete(couch_dbs_pid_to_name, Pid),
-            exit(Pid, kill),
-            {true, {gb_trees:delete(Lru, Tree), dict:erase(DbName, Dict)}};
+    CouchDbs = couch_server:couch_dbs(DbName),
+    CouchDbsPidToName = couch_server:couch_dbs_pid_to_name(DbName),
+
+    case couch_server:try_lock(CouchDbs, DbName) of
+        {ok, #entry{db = Db, pid = Pid}} ->
+            case couch_db:is_idle(Db) of
+                true ->
+                    true = ets:delete(CouchDbs, DbName),
+                    true = ets:delete(CouchDbsPidToName, Pid),
+                    exit(Pid, kill),
+                    {true, {gb_trees:delete(Lru, Tree), dict:erase(DbName, Dict)}};
+                false ->
+                    true = couch_server:unlock(CouchDbs, DbName),
+                    couch_stats:increment_counter([couchdb, couch_server, lru_skip]),
+                    close_int(gb_trees:next(Iter), update(DbName, Cache))
+            end;
         false ->
-            ElemSpec = {#entry.lock, unlocked},
-            true = ets:update_element(couch_dbs, DbName, ElemSpec),
-            couch_stats:increment_counter([couchdb, couch_server, lru_skip]),
-            close_int(gb_trees:next(Iter), update(DbName, Cache))
-        end;
-    false ->
-        NewTree = gb_trees:delete(Lru, Tree),
-        NewIter = gb_trees:iterator(NewTree),
-        close_int(gb_trees:next(NewIter), {NewTree, dict:erase(DbName, Dict)})
-end.
+            NewTree = gb_trees:delete(Lru, Tree),
+            NewIter = gb_trees:iterator(NewTree),
+            close_int(gb_trees:next(NewIter), {NewTree, dict:erase(DbName, Dict)})
+    end.

@@ -20,7 +20,7 @@ defmodule UTF8Test do
       "5. Braille: ⡌⠁⠧⠑ ⠼⠁⠒  ⡍⠜⠇⠑⠹⠰⠎ ⡣⠕⠌",
       "6. null \u0000 byte",
     ]
-    
+
     texts
     |> Enum.with_index()
     |> Enum.each(fn {string, index} ->
@@ -30,7 +30,7 @@ defmodule UTF8Test do
 
     texts
     |> Enum.with_index()
-    |> Enum.each(fn {_, index} ->
+    |> Enum.each(fn {_string, index} ->
       resp = Couch.get("/#{db_name}/#{index}")
       %{"_id" => id, "text" => text} = resp.body
       assert resp.status_code == 200

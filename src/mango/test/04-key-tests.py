@@ -1,4 +1,3 @@
-# -*- coding: latin-1 -*-
 # Licensed under the Apache License, Version 2.0 (the "License"); you may not
 # use this file except in compliance with the License. You may obtain a copy of
 # the License at
@@ -49,8 +48,7 @@ class KeyTests(mango.DbPerClass):
         super(KeyTests, klass).setUpClass()
         klass.db.save_docs(TEST_DOCS, w=3)
         klass.db.create_index(["type"], ddoc="view")
-        if mango.has_text_service():
-            klass.db.create_text_index(ddoc="text")
+        klass.db.create_text_index(ddoc="text")
 
     def run_check(self, query, check, fields=None, indexes=None):
         if indexes is None:

@@ -13,31 +13,27 @@
 -module(couch_log_writer_ets).
 -behaviour(couch_log_writer).
 
-
 -export([
     init/0,
     terminate/2,
     write/2
 ]).
 
-
 -include("couch_log.hrl").
-
 
 init() ->
     ets:new(?COUCH_LOG_TEST_TABLE, [named_table, public, ordered_set]),
     {ok, 0}.
 
-
 terminate(_, _St) ->
     ets:delete(?COUCH_LOG_TEST_TABLE),
     ok.
 
-
 write(Entry0, St) ->
-    Entry = Entry0#log_entry{
-        msg = lists:flatten(Entry0#log_entry.msg),
-        time_stamp = lists:flatten(Entry0#log_entry.time_stamp)
+    Entry1 = couch_log_util:maybe_format_type(Entry0),
+    Entry = Entry1#log_entry{
+        msg = lists:flatten(Entry1#log_entry.msg),
+        time_stamp = lists:flatten(Entry1#log_entry.time_stamp)
     },
     Ignored = application:get_env(couch_log, ignored_pids, []),
     case lists:member(Entry#log_entry.pid, Ignored) of

@@ -1,9 +1,6 @@
 defmodule ViewMultiKeyAllDocsTest do
   use CouchTestCase
 
-  @moduletag :view_multi_key_all_docs
-  @moduletag kind: :single_node
-
   @keys ["10", "15", "30", "37", "50"]
 
   setup_all do

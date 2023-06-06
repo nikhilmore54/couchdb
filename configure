@@ -21,17 +21,25 @@ basename=`basename $0`
 
 PACKAGE_AUTHOR_NAME="The Apache Software Foundation"
 
+REBAR3_BRANCH="3.21.0"
+
 # TEST=0
-WITH_CURL="false"
 WITH_PROPER="true"
 WITH_FAUXTON=1
 WITH_DOCS=1
+WITH_NOUVEAU=0
 ERLANG_MD5="false"
 SKIP_DEPS=0
 
+run_erlang() {
+    erl -noshell -eval "$1" -eval "halt()."
+}
+
 COUCHDB_USER="$(whoami 2>/dev/null || echo couchdb)"
-SM_VSN="1.8.5"
+SM_VSN=${SM_VSN:-"91"}
 ARCH="$(uname -m)"
+ERLANG_VER="$(run_erlang 'io:put_chars(erlang:system_info(otp_release)).')"
+ERLANG_OS="$(run_erlang 'case os:type() of {OS, _} -> io:format("~s~n", [OS]) end.')"
 
 . ${rootdir}/version.mk
 COUCHDB_VERSION=${vsn_major}.${vsn_minor}.${vsn_patch}
@@ -47,14 +55,16 @@ Options:
 
   -h | --help                 display a short help message and exit
   -u | --user USER            set the username to run as (defaults to $COUCHDB_USER)
-  -c | --with-curl            request that couchjs is linked to cURL (default false)
   --disable-fauxton           do not build Fauxton
   --disable-docs              do not build any documentation or manpages
+  --enable-nouveau            enable the new experimental search module
   --erlang-md5                use erlang for md5 hash operations
-  --dev                       alias for --with-curl --disable-docs --disable-fauxton
+  --dev                       alias for --disable-docs --disable-fauxton
   --spidermonkey-version VSN  specify the version of SpiderMonkey to use (defaults to $SM_VSN)
   --skip-deps                 do not update erlang dependencies
   --rebar=PATH                use rebar by specified path (version >=2.6.0 && <3.0 required)
+  --rebar3=PATH               use rebar3 by specified path
+  --erlfmt=PATH               use erlfmt by specified path
 EOF
 }
 
@@ -64,12 +74,6 @@ parse_opts() {
             -h|--help)
                 display_help
                 exit
-                ;;
-
-            --with-curl|-c)
-                WITH_CURL="true"
-                shift
-                continue
                 ;;
 
             --without-proper)
@@ -90,6 +94,12 @@ parse_opts() {
                 continue
                 ;;
 
+            --enable-nouveau)
+                WITH_NOUVEAU=1
+                shift
+                continue
+                ;;
+
             --erlang-md5)
                 ERLANG_MD5="true"
                 shift
@@ -99,7 +109,14 @@ parse_opts() {
             --dev)
                 WITH_DOCS=0
                 WITH_FAUXTON=0
-                WITH_CURL="true"
+                shift
+                continue
+                ;;
+
+            --dev-with-nouveau)
+                WITH_DOCS=0
+                WITH_FAUXTON=0
+                WITH_NOUVEAU=1
                 shift
                 continue
                 ;;
@@ -122,6 +139,28 @@ parse_opts() {
                     continue
                 else
                     printf 'ERROR: "--rebar" requires valid path to executable.\n' >&2
+                    exit 1
+                fi
+                ;;
+
+            --rebar3)
+                if [ -x "$2" ]; then
+                    eval REBAR3=$2
+                    shift 2
+                    continue
+                else
+                    printf 'ERROR: "--rebar3" requires valid path to executable.\n' >&2
+                    exit 1
+                fi
+                ;;
+
+            --erlfmt)
+                if [ -x "$2" ]; then
+                    eval ERLFMT=$2
+                    shift 2
+                    continue
+                else
+                    printf 'ERROR: "--erlfmt" requires valid path to executable.\n' >&2
                     exit 1
                 fi
                 ;;
@@ -161,6 +200,7 @@ parse_opts() {
                 printf 'ERROR: "--spidermonkey-version" requires a non-empty argument.\n' >&2
                 exit 1
                 ;;
+
             --) # End of options
                 shift
                 break
@@ -178,10 +218,27 @@ parse_opts() {
 
 parse_opts $@
 
-if [ "${ARCH}" = "aarch64" ] && [ "${SM_VSN}" != "1.8.5" ]
-then
-  echo "ERROR: SpiderMonkey 60 is known broken on ARM 64 (aarch64). Use 1.8.5 instead."
+if [ "${ARCH}" = "aarch64" ] && [ "${SM_VSN}" = "60" ]; then
+  echo "ERROR: SpiderMonkey 60 is known broken on ARM 64 (aarch64). Use another version instead."
   exit 1
+fi
+
+if [ "${ERLANG_OS}" = "unix" ]; then
+    case "${SM_VSN}" in
+        1.8.5)
+            SM_HEADERS="js"
+            ;;
+        *)  SM_HEADERS="mozjs-${SM_VSN}"
+            ;;
+        esac
+
+    # This list is taken from src/couch/rebar.config.script, please keep them in sync.
+    if [ ! -d "/usr/include/${SM_HEADERS}" ] && \
+        [ ! -d "/usr/local/include/${SM_HEADERS}" ] && \
+        [ ! -d "/opt/homebrew/include/${SM_HEADERS}" ]; then
+        echo "ERROR: SpiderMonkey ${SM_VSN} is not found. Please specify with --spidermonkey-version."
+        exit 1
+    fi
 fi
 
 echo "==> configuring couchdb in rel/couchdb.config"
@@ -204,6 +261,7 @@ cat > rel/couchdb.config << EOF
 {prefix, "."}.
 {data_dir, "./data"}.
 {view_index_dir, "./data"}.
+{state_dir, "./data"}.
 {log_file, "$LOG_FILE"}.
 {fauxton_root, "./share/www"}.
 {user, "$COUCHDB_USER"}.
@@ -211,6 +269,7 @@ cat > rel/couchdb.config << EOF
 {node_name, "-name couchdb@127.0.0.1"}.
 {cluster_port, 5984}.
 {backend_port, 5986}.
+{prometheus_port, 17986}.
 EOF
 
 cat > install.mk << EOF
@@ -232,13 +291,13 @@ package_author_name = $PACKAGE_AUTHOR_NAME
 
 with_fauxton = $WITH_FAUXTON
 with_docs = $WITH_DOCS
+with_nouveau = $WITH_NOUVEAU
 
 user = $COUCHDB_USER
 spidermonkey_version = $SM_VSN
 EOF
 
 cat > $rootdir/config.erl << EOF
-{with_curl, $WITH_CURL}.
 {with_proper, $WITH_PROPER}.
 {erlang_md5, $ERLANG_MD5}.
 {spidermonkey_version, "$SM_VSN"}.
@@ -255,15 +314,28 @@ install_local_rebar() {
     fi
 }
 
-install_local_emilio() {
-    if [ ! -x "${rootdir}/bin/emilio" ]; then
-        if [ ! -d "${rootdir}/src/emilio" ]; then
-            git clone --depth 1 https://github.com/cloudant-labs/emilio ${rootdir}/src/emilio
+install_local_rebar3() {
+    if [ ! -x "${rootdir}/bin/rebar3" ]; then
+        if [ ! -d "${rootdir}/src/rebar3" ]; then
+            git clone --depth 1 --branch ${REBAR3_BRANCH} https://github.com/erlang/rebar3.git ${rootdir}/src/rebar3
         fi
-        cd ${rootdir}/src/emilio && ${REBAR} compile escriptize; cd ${rootdir}
-        mv ${rootdir}/src/emilio/emilio ${rootdir}/bin/emilio
-        chmod +x ${rootdir}/bin/emilio
-        cd ${rootdir}/src/emilio && ${REBAR} clean; cd ${rootdir}
+        cd src/rebar3
+        ./bootstrap
+        mv ${rootdir}/src/rebar3/rebar3 ${rootdir}/bin/rebar3
+        cd ../..
+    fi
+}
+
+install_local_erlfmt() {
+    if [ ! -x "${rootdir}/bin/erlfmt" ]; then
+        if [ ! -d "${rootdir}/src/erlfmt" ]; then
+            git clone --depth 1 https://github.com/WhatsApp/erlfmt.git ${rootdir}/src/erlfmt
+        fi
+        cd "${rootdir}"/src/erlfmt
+        ${REBAR3} as release escriptize
+        mv ${rootdir}/src/erlfmt/_build/release/bin/erlfmt ${rootdir}/bin/erlfmt
+        ${REBAR3} clean
+        cd ../..
     fi
 }
 
@@ -272,7 +344,15 @@ if [ -z "${REBAR}" ]; then
     REBAR=${rootdir}/bin/rebar
 fi
 
-install_local_emilio
+if [ -z "${REBAR3}" ]; then
+    install_local_rebar3
+    REBAR3=${rootdir}/bin/rebar3
+fi
+
+if [ -z "${ERLFMT}" ]; then
+    install_local_erlfmt
+    ERLFMT=${rootdir}/bin/erlfmt
+fi
 
 # only update dependencies, when we are not in a release tarball
 if [ -d .git  -a $SKIP_DEPS -ne 1 ]; then

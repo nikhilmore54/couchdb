@@ -20,12 +20,10 @@
     execute/3
 ]).
 
-
 -include_lib("couch/include/couch_db.hrl").
 -include_lib("dreyfus/include/dreyfus.hrl").
 -include("mango_cursor.hrl").
 -include("mango.hrl").
-
 
 -record(cacc, {
     selector,
@@ -42,14 +40,14 @@
     execution_stats
 }).
 
-
-create(Db, Indexes, Selector, Opts) ->
-    Index = case Indexes of
-        [Index0] ->
-            Index0;
-        _ ->
-            ?MANGO_ERROR(multiple_text_indexes)
-    end,
+create(Db, Indexes, Selector, Opts0) ->
+    Index =
+        case Indexes of
+            [Index0] ->
+                Index0;
+            _ ->
+                ?MANGO_ERROR(multiple_text_indexes)
+        end,
 
     Bookmark = unpack_bookmark(couch_db:name(Db), Opts),
 
@@ -70,18 +68,16 @@ create(Db, Indexes, Selector, Opts) ->
         bookmark = Bookmark
     }}.
 
-
 explain(Cursor) ->
     #cursor{
         selector = Selector,
         opts = Opts
     } = Cursor,
     [
-        {'query', mango_selector_text:convert(Selector)},
+        {query, mango_selector_text:convert(Selector)},
         {partition, get_partition(Opts, null)},
         {sort, sort_query(Opts, Selector)}
     ].
-
 
 execute(Cursor, UserFun, UserAcc) ->
     #cursor{
@@ -133,11 +129,14 @@ execute(Cursor, UserFun, UserAcc) ->
             JsonBM = dreyfus_bookmark:pack(FinalBM),
             Arg = {add_key, bookmark, JsonBM},
             {_Go, FinalUserAcc} = UserFun(Arg, LastUserAcc),
-            FinalUserAcc0 = mango_execution_stats:maybe_add_stats(Opts, UserFun, Stats0, FinalUserAcc),
-            FinalUserAcc1 = mango_cursor:maybe_add_warning(UserFun, Cursor, Stats0, FinalUserAcc0),
+            {FinalUserAcc0, Stats1} = mango_execution_stats:maybe_add_stats(
+                Opts, UserFun, Stats0, FinalUserAcc
+            ),
+            %% This needs Stats1 as log_end is called in maybe_add_stats
+            mango_execution_stats:log_stats(Stats1),
+            FinalUserAcc1 = mango_cursor:maybe_add_warning(UserFun, Cursor, Stats1, FinalUserAcc0),
             {ok, FinalUserAcc1}
     end.
-
 
 execute(CAcc) ->
     case search_docs(CAcc) of
@@ -154,7 +153,6 @@ execute(CAcc) ->
             execute(FinalCAcc)
     end.
 
-
 search_docs(CAcc) ->
     #cacc{
         dbname = DbName,
@@ -169,19 +167,15 @@ search_docs(CAcc) ->
             ?MANGO_ERROR({text_search_error, {error, Reason}})
     end.
 
-
 handle_hits(CAcc, []) ->
     {ok, CAcc};
-
 handle_hits(CAcc0, [{Sort, Doc} | Rest]) ->
     CAcc1 = handle_hit(CAcc0, Sort, Doc),
     handle_hits(CAcc1, Rest).
 
-
 handle_hit(CAcc0, Sort, not_found) ->
     CAcc1 = update_bookmark(CAcc0, Sort),
     CAcc1;
-
 handle_hit(CAcc0, Sort, Doc) ->
     #cacc{
         limit = Limit,
@@ -210,7 +204,6 @@ handle_hit(CAcc0, Sort, Doc) ->
             CAcc2
     end.
 
-
 apply_user_fun(CAcc, Doc) ->
     FinalDoc = mango_fields:extract(Doc, CAcc#cacc.fields),
     #cacc{
@@ -226,38 +219,39 @@ apply_user_fun(CAcc, Doc) ->
             throw({stop, CAcc#cacc{user_acc = NewUserAcc, execution_stats = Stats0}})
     end.
 
-
 %% Convert Query to Dreyfus sort specifications
 %% Covert <<"Field">>, <<"desc">> to <<"-Field">>
 %% and append to the dreyfus query
 sort_query(Opts, Selector) ->
     {sort, {Sort}} = lists:keyfind(sort, 1, Opts),
-    SortList = lists:map(fun(SortField) ->
-        {Dir, RawSortField}  = case SortField of
-            {Field, <<"asc">>} -> {asc, Field};
-            {Field, <<"desc">>} -> {desc, Field};
-            Field when is_binary(Field) -> {asc, Field}
+    SortList = lists:map(
+        fun(SortField) ->
+            {Dir, RawSortField} =
+                case SortField of
+                    {Field, <<"asc">>} -> {asc, Field};
+                    {Field, <<"desc">>} -> {desc, Field};
+                    Field when is_binary(Field) -> {asc, Field}
+                end,
+            SField = mango_selector_text:append_sort_type(RawSortField, Selector),
+            case Dir of
+                asc ->
+                    SField;
+                desc ->
+                    <<"-", SField/binary>>
+            end
         end,
-        SField = mango_selector_text:append_sort_type(RawSortField, Selector),
-        case Dir of
-            asc ->
-                SField;
-            desc ->
-                <<"-", SField/binary>>
-        end
-    end, Sort),
+        Sort
+    ),
     case SortList of
         [] -> relevance;
         _ -> SortList
     end.
-
 
 get_partition(Opts, Default) ->
     case couch_util:get_value(partition, Opts) of
         <<>> -> Default;
         Else -> Else
     end.
-
 
 get_bookmark(Opts) ->
     case lists:keyfind(bookmark, 1, Opts) of
@@ -267,7 +261,6 @@ get_bookmark(Opts) ->
             nil
     end.
 
-
 update_bookmark(CAcc, Sortable) ->
     BM = CAcc#cacc.bookmark,
     QueryArgs = CAcc#cacc.query_args,
@@ -275,26 +268,26 @@ update_bookmark(CAcc, Sortable) ->
     NewBM = dreyfus_bookmark:update(Sort, BM, [Sortable]),
     CAcc#cacc{bookmark = NewBM}.
 
-
 pack_bookmark(Bookmark) ->
     case dreyfus_bookmark:pack(Bookmark) of
         null -> nil;
         Enc -> Enc
     end.
 
-
 unpack_bookmark(DbName, Opts) ->
-    case lists:keyfind(bookmark, 1, Opts) of
-        {_, nil} ->
-            [];
-        {_, Bin} ->
-            try
-                dreyfus_bookmark:unpack(DbName, Bin)
-            catch _:_ ->
-                ?MANGO_ERROR({invalid_bookmark, Bin})
-            end
-    end.
-
+    NewBM =
+        case lists:keyfind(bookmark, 1, Opts) of
+            {_, nil} ->
+                [];
+            {_, Bin} ->
+                try
+                    dreyfus_bookmark:unpack(DbName, Bin)
+                catch
+                    _:_ ->
+                        ?MANGO_ERROR({invalid_bookmark, Bin})
+                end
+        end,
+    lists:keystore(bookmark, 1, Opts, {bookmark, NewBM}).
 
 ddocid(Idx) ->
     case mango_idx:ddoc(Idx) of
@@ -303,7 +296,6 @@ ddocid(Idx) ->
         Else ->
             Else
     end.
-
 
 update_query_args(CAcc) ->
     #cacc{
@@ -315,29 +307,32 @@ update_query_args(CAcc) ->
         limit = get_limit(CAcc)
     }.
 
-
 get_limit(CAcc) ->
     erlang:min(get_dreyfus_limit(), CAcc#cacc.limit + CAcc#cacc.skip).
-
 
 get_dreyfus_limit() ->
     config:get_integer("dreyfus", "max_limit", 200).
 
-
 get_json_docs(DbName, Hits) ->
-    Ids = lists:map(fun(#sortable{item = Item}) ->
-        couch_util:get_value(<<"_id">>, Item#hit.fields)
-    end, Hits),
+    Ids = lists:map(
+        fun(#sortable{item = Item}) ->
+            couch_util:get_value(<<"_id">>, Item#hit.fields)
+        end,
+        Hits
+    ),
     % TODO: respect R query parameter (same as json indexes)
     {ok, IdDocs} = dreyfus_fabric:get_json_docs(DbName, Ids),
-    lists:map(fun(#sortable{item = Item} = Sort) ->
-        Id = couch_util:get_value(<<"_id">>, Item#hit.fields),
-        case lists:keyfind(Id, 1, IdDocs) of
-            {Id, {doc, Doc}} ->
-                {Sort, Doc};
-            false ->
-                {Sort, not_found}
-        end
-    end, Hits).
+    lists:map(
+        fun(#sortable{item = Item} = Sort) ->
+            Id = couch_util:get_value(<<"_id">>, Item#hit.fields),
+            case lists:keyfind(Id, 1, IdDocs) of
+                {Id, {doc, Doc}} ->
+                    {Sort, Doc};
+                false ->
+                    {Sort, not_found}
+            end
+        end,
+        Hits
+    ).
 
 -endif.

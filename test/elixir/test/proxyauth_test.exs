@@ -2,30 +2,9 @@ defmodule ProxyAuthTest do
   use CouchTestCase
 
   @moduletag :authentication
-  @moduletag kind: :single_node
 
   @tag :with_db
-  test "proxy auth with secret", context do
-    db_name = context[:db_name]
-
-    design_doc = %{
-      _id: "_design/test",
-      language: "javascript",
-      shows: %{
-        welcome: """
-           function(doc,req) {
-          return "Welcome " + req.userCtx["name"];
-        }
-        """,
-        role: """
-          function(doc, req) {
-          return req.userCtx['roles'][0];
-        }
-        """
-      }
-    }
-
-    {:ok, _} = create_doc(db_name, design_doc)
+  test "proxy auth with secret" do
 
     users_db_name = random_db_name()
     create_db(users_db_name)
@@ -39,19 +18,19 @@ defmodule ProxyAuthTest do
         :value => users_db_name
       },
       %{
-        :section => "couch_httpd_auth",
+        :section => "chttpd_auth",
         :key => "proxy_use_secret",
         :value => "true"
       },
       %{
-        :section => "couch_httpd_auth",
+        :section => "chttpd_auth",
         :key => "secret",
         :value => secret
       }
     ]
 
     run_on_modified_server(server_config, fn ->
-      test_fun(db_name, users_db_name, secret)
+      test_fun(users_db_name, secret)
     end)
     delete_db(users_db_name)
   end
@@ -64,11 +43,11 @@ defmodule ProxyAuthTest do
   end
 
   defp hex_hmac_sha1(secret, message) do
-    signature = :crypto.hmac(:sha, secret, message)
+    signature = :crypto.mac(:hmac, :sha, secret, message)
     Base.encode16(signature, case: :lower)
   end
 
-  def test_fun(db_name, users_db_name, secret) do
+  def test_fun(users_db_name, secret) do
     user = prepare_user_doc(name: "couch@apache.org", password: "test")
     create_doc(users_db_name, user)
 
@@ -82,38 +61,24 @@ defmodule ProxyAuthTest do
 
     headers = [
       "X-Auth-CouchDB-UserName": "couch@apache.org",
-      "X-Auth-CouchDB-Roles": "test",
+      "X-Auth-CouchDB-Roles": "test_role",
       "X-Auth-CouchDB-Token": hex_hmac_sha1(secret, "couch@apache.org")
     ]
-    resp = Couch.get("/#{db_name}/_design/test/_show/welcome", headers: headers)
-    assert resp.body == "Welcome couch@apache.org"
 
-    resp = Couch.get("/#{db_name}/_design/test/_show/role", headers: headers)
-    assert resp.body == "test"
+    resp2 =
+      Couch.get("/_session",
+        headers: headers
+      )
+
+    assert resp2.body["userCtx"]["name"] == "couch@apache.org"
+    assert resp2.body["userCtx"]["roles"] == ["test_role"]
+    assert resp2.body["info"]["authenticated"] == "proxy"
+    assert resp2.body["ok"] == true
+
   end
 
   @tag :with_db
-  test "proxy auth without secret", context do
-    db_name = context[:db_name]
-
-    design_doc = %{
-      _id: "_design/test",
-      language: "javascript",
-      shows: %{
-        welcome: """
-           function(doc,req) {
-          return "Welcome " + req.userCtx["name"];
-        }
-        """,
-        role: """
-          function(doc, req) {
-          return req.userCtx['roles'][0];
-        }
-        """
-      }
-    }
-
-    {:ok, _} = create_doc(db_name, design_doc)
+  test "proxy auth without secret" do
 
     users_db_name = random_db_name()
     create_db(users_db_name)
@@ -125,20 +90,20 @@ defmodule ProxyAuthTest do
         :value => users_db_name
       },
       %{
-        :section => "couch_httpd_auth",
+        :section => "chttpd_auth",
         :key => "proxy_use_secret",
         :value => "false"
       }
     ]
 
     run_on_modified_server(server_config, fn ->
-      test_fun_no_secret(db_name, users_db_name)
+      test_fun_no_secret(users_db_name)
     end)
 
     delete_db(users_db_name)
   end
 
-  def test_fun_no_secret(db_name, users_db_name) do
+  def test_fun_no_secret(users_db_name) do
     user = prepare_user_doc(name: "couch@apache.org", password: "test")
     create_doc(users_db_name, user)
 
@@ -152,13 +117,18 @@ defmodule ProxyAuthTest do
 
     headers = [
       "X-Auth-CouchDB-UserName": "couch@apache.org",
-      "X-Auth-CouchDB-Roles": "test"
+      "X-Auth-CouchDB-Roles": "test_role_1,test_role_2"
     ]
 
-    resp = Couch.get("/#{db_name}/_design/test/_show/welcome", headers: headers)
-    assert resp.body == "Welcome couch@apache.org"
+    resp2 =
+      Couch.get("/_session",
+        headers: headers
+      )
 
-    resp = Couch.get("/#{db_name}/_design/test/_show/role", headers: headers)
-    assert resp.body == "test"
+    assert resp2.body["userCtx"]["name"] == "couch@apache.org"
+    assert resp2.body["userCtx"]["roles"] == ["test_role_1", "test_role_2"]
+    assert resp2.body["info"]["authenticated"] == "proxy"
+    assert resp2.body["ok"] == true
+
   end
 end

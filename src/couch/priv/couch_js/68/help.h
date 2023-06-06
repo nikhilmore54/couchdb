@@ -19,21 +19,21 @@ static const char VERSION_TEMPLATE[] =
     "%s - %s (SpiderMonkey 68)\n"
     "\n"
     "Licensed under the Apache License, Version 2.0 (the \"License\"); you may "
-        "not use\n"
+    "not use\n"
     "this file except in compliance with the License. You may obtain a copy of"
-        "the\n"
+    "the\n"
     "License at\n"
     "\n"
     "  http://www.apache.org/licenses/LICENSE-2.0\n"
     "\n"
     "Unless required by applicable law or agreed to in writing, software "
-        "distributed\n"
+    "distributed\n"
     "under the License is distributed on an \"AS IS\" BASIS, WITHOUT "
-        "WARRANTIES OR\n"
+    "WARRANTIES OR\n"
     "CONDITIONS OF ANY KIND, either express or implied. See the License "
-        "for the\n"
+    "for the\n"
     "specific language governing permissions and limitations under the "
-        "License.\n";
+    "License.\n";
 
 static const char USAGE_TEMPLATE[] =
     "Usage: %s [FILE]\n"
@@ -46,40 +46,32 @@ static const char USAGE_TEMPLATE[] =
     "\n"
     "  -h          display a short help message and exit\n"
     "  -V          display version information and exit\n"
-    "  -H          enable %s cURL bindings (only avaiable\n"
-    "              if package was built with cURL available)\n"
-    "  -T          enable test suite specific functions (these\n"
-    "              should not be enabled for production systems)\n"
     "  -S SIZE     specify that the runtime should allow at\n"
     "              most SIZE bytes of memory to be allocated\n"
     "              default is 64 MiB\n"
-    "  -u FILE     path to a .uri file containing the address\n"
-    "              (or addresses) of one or more servers\n"
     "  --eval      Enable runtime code evaluation (dangerous!)\n"
     "\n"
     "Report bugs at <%s>.\n";
 
 #define BASENAME COUCHJS_NAME
 
-#define couch_version(basename)  \
-    fprintf(                     \
-            stdout,              \
-            VERSION_TEMPLATE,    \
-            basename,            \
-            PACKAGE_STRING)
+#define couch_version(basename) \
+    fprintf(                    \
+        stdout,                 \
+        VERSION_TEMPLATE,       \
+        basename,               \
+        PACKAGE_STRING)
 
 #define DISPLAY_VERSION couch_version(BASENAME)
 
-
 #define couch_usage(basename) \
-    fprintf(                                    \
-            stdout,                             \
-            USAGE_TEMPLATE,                     \
-            basename,                           \
-            basename,                           \
-            PACKAGE_NAME,                       \
-            basename,                           \
-            PACKAGE_BUGREPORT)
+    fprintf(                  \
+        stdout,               \
+        USAGE_TEMPLATE,       \
+        basename,             \
+        basename,             \
+        PACKAGE_NAME,         \
+        PACKAGE_BUGREPORT)
 
 #define DISPLAY_USAGE couch_usage(BASENAME)
 

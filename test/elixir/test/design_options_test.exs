@@ -2,7 +2,6 @@ defmodule DesignOptionsTest do
   use CouchTestCase
 
   @moduletag :design_docs
-  @moduletag kind: :single_node
 
   @moduledoc """
   Test CouchDB design documents options include_design and local_seq

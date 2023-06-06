@@ -11,6 +11,7 @@
 # the License.
 
 import random
+from functools import partial
 
 import mango
 import copy
@@ -69,7 +70,7 @@ class IndexCrudTests(mango.DbPerClass):
                 raise AssertionError("bad create index")
 
     def test_bad_names(self):
-        bad_names = [True, False, 1.5, {"foo": "bar"}, [None, False]]
+        bad_names = ["", True, False, 1.5, {"foo": "bar"}, [None, False]]
         for bn in bad_names:
             try:
                 self.db.create_index(["foo"], name=bn)
@@ -77,12 +78,66 @@ class IndexCrudTests(mango.DbPerClass):
                 self.assertEqual(e.response.status_code, 400)
             else:
                 raise AssertionError("bad create index")
+
+    def test_bad_ddocs(self):
+        bad_ddocs = ["", True, False, 1.5, {"foo": "bar"}, [None, False]]
+        for bd in bad_ddocs:
             try:
-                self.db.create_index(["foo"], ddoc=bn)
+                self.db.create_index(["foo"], ddoc=bd)
             except Exception as e:
                 self.assertEqual(e.response.status_code, 400)
             else:
                 raise AssertionError("bad create index")
+
+    def test_bad_urls(self):
+        # These are only the negative test cases because ideally the
+        # positive ones are implicitly tested by other ones.
+
+        all_methods = [
+            ("PUT", self.db.sess.put),
+            ("GET", self.db.sess.get),
+            ("POST", self.db.sess.post),
+            ("PATCH", self.db.sess.get),
+            ("DELETE", self.db.sess.delete),
+            ("HEAD", self.db.sess.head),
+            ("COPY", partial(self.db.sess.request, "COPY")),
+            ("OPTIONS", partial(self.db.sess.request, "OPTIONS")),
+            ("TRACE", partial(self.db.sess.request, "TRACE")),
+            ("CONNECT", partial(self.db.sess.request, "CONNECT")),
+        ]
+
+        def all_but(method):
+            return list(filter(lambda x: x[0] != method, all_methods))
+
+        # Three-element subpaths are used as a shorthand to delete
+        # indexes via design documents, see below.
+        for subpath in ["a", "a/b", "a/b/c/d", "a/b/c/d/e", "a/b/c/d/e/f"]:
+            path = self.db.path("_index/{}".format(subpath))
+            for method_name, method in all_methods:
+                with self.subTest(path=path, method=method_name):
+                    r = method(path)
+                    self.assertEqual(r.status_code, 404)
+
+        for method_name, method in all_but("POST"):
+            path = self.db.path("_index/_bulk_delete")
+            with self.subTest(path=path, method=method_name):
+                r = method(path)
+                self.assertEqual(r.status_code, 405)
+
+        fields = ["foo", "bar"]
+        ddoc = "dd"
+        idx = "idx_01"
+        ret = self.db.create_index(fields, name=idx, ddoc=ddoc)
+        assert ret is True
+        for subpath in [
+            "{}/json/{}".format(ddoc, idx),
+            "_design/{}/json/{}".format(ddoc, idx),
+        ]:
+            path = self.db.path("_index/{}".format(subpath))
+            for method_name, method in all_but("DELETE"):
+                r = method(path)
+                with self.subTest(path=path, method=method_name):
+                    self.assertEqual(r.status_code, 405)
 
     def test_create_idx_01(self):
         fields = ["foo", "bar"]

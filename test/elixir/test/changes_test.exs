@@ -87,7 +87,7 @@ defmodule ChangesTest do
   end
 
   @tag :with_db
-  test "non-existing desing doc for filtered changes", context do
+  test "non-existing design doc for filtered changes", context do
     db_name = context[:db_name]
     resp = Couch.get("/#{db_name}/_changes?filter=nothingtosee/bop")
     assert resp.status_code == 404
@@ -102,7 +102,7 @@ defmodule ChangesTest do
   end
 
   @tag :with_db
-  test "non-existing desing doc and funcion for filtered changes", context do
+  test "non-existing design doc and function for filtered changes", context do
     db_name = context[:db_name]
     resp = Couch.get("/#{db_name}/_changes?filter=nothingtosee/movealong")
     assert resp.status_code == 404
@@ -226,6 +226,64 @@ defmodule ChangesTest do
     resp = Couch.get("/#{db_name}/_changes?filter=_design")
     assert length(resp.body["results"]) == 1
     assert Enum.at(resp.body["results"], 0)["id"] == "_design/erlang"
+  end
+
+  @tag :with_db
+  test "changes filtering on custom filter", context do
+    db_name = context[:db_name]
+    create_filters_view(db_name)
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop")
+    assert Enum.empty?(resp.body["results"]), "db must be empty"
+
+    {:ok, doc_resp} = create_doc(db_name, %{bop: "foom"})
+    rev = doc_resp.body["rev"]
+    create_doc(db_name, %{bop: false})
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop")
+    assert length(resp.body["results"]) == 1
+    change_rev = get_change_rev_at(resp.body["results"], 0)
+    assert change_rev == rev
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop",
+      body: %{doc_ids: ["doc1", "doc3", "doc4"]},
+      headers: ["Content-Type": "application/json"]
+    )
+    assert length(resp.body["results"]) == 1
+    change_rev = get_change_rev_at(resp.body["results"], 0)
+    assert change_rev == rev
+  end
+
+  @tag :with_db
+  test "changes fail on invalid payload", context do
+    db_name = context[:db_name]
+    create_filters_view(db_name)
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop",
+      body: "[\"doc1\"]",
+      headers: ["Content-Type": "application/json"]
+    )
+    assert resp.status_code == 400
+    assert resp.body["error"] == "bad_request"
+    assert resp.body["reason"] == "Request body must be a JSON object"
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop",
+      body: "{\"doc_ids\": [\"doc1\",",
+      headers: ["Content-Type": "application/json"]
+    )
+    assert resp.status_code == 400
+    assert resp.body["error"] == "bad_request"
+    assert resp.body["reason"] == "invalid UTF-8 JSON"
+
+    set_config({"chttpd", "max_http_request_size", "16"})
+
+    resp = Couch.post("/#{db_name}/_changes?filter=changes_filter/bop",
+      body: %{doc_ids: ["doc1", "doc3", "doc4"]},
+      headers: ["Content-Type": "application/json"]
+    )
+    assert resp.status_code == 413
+    assert resp.body["error"] == "too_large"
+    assert resp.body["reason"] == "the request entity is too large"
   end
 
   @tag :with_db

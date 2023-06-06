@@ -1,4 +1,4 @@
-#!/usr/bin/env python2.7
+#!/usr/bin/env python3
 
 import argparse
 import glob
@@ -18,7 +18,7 @@ TEST_COLLECTIONS = {
 
 def _attrs(elem):
     ret = {}
-    for (k, v) in elem.attributes.items():
+    for k, v in elem.attributes.items():
         ret[k.lower()] = v
     return ret
 
@@ -198,15 +198,15 @@ def display_failures(collections):
 
     if not len(failures):
         return
-    print "Failures"
-    print "========"
-    print
+    print("Failures")
+    print("========")
+    print()
     for failure in failures:
-        print failure[0]
-        print "-" * len(failure[0])
-        print
-        print failure[1]
-        print
+        print(failure[0])
+        print("-" * len(failure[0]))
+        print()
+        print(failure[1])
+        print()
 
 
 def display_errors(collections):
@@ -220,15 +220,15 @@ def display_errors(collections):
 
     if not len(errors):
         return
-    print "Errors"
-    print "======"
-    print
+    print("Errors")
+    print("======")
+    print()
     for error in errors:
-        print error[0]
-        print "-" * len(error[0])
-        print
-        print error[1]
-        print
+        print(error[0])
+        print("-" * len(error[0]))
+        print()
+        print(error[1])
+        print()
 
 
 def display_skipped(collections):
@@ -242,12 +242,12 @@ def display_skipped(collections):
                 skipped.append((name, test.skipped_msg))
     if not skipped:
         return
-    print "Skipped"
-    print "======="
-    print
+    print("Skipped")
+    print("=======")
+    print()
     for row in sorted(skipped):
-        print "  %s: %s" % row
-    print
+        print("  %s: %s" % row)
+    print()
 
 
 def display_table(table):
@@ -263,7 +263,7 @@ def display_table(table):
         table[ridx] = new_row
     for row in table:
         fmt = " ".join(["%10s"] * len(row))
-        print fmt % tuple(row)
+        print(fmt % tuple(row))
 
 
 def display_collections(collections, sort):
@@ -305,12 +305,12 @@ def display_collections(collections, sort):
 
     rows.sort(key=skey)
 
-    print "Collections"
-    print "==========="
-    print
+    print("Collections")
+    print("===========")
+    print()
     headers = ["Total", "Fixture", "Test", "Count", "Failed", "Errors", "Skipped"]
     display_table([headers] + rows)
-    print
+    print()
 
 
 def display_suites(collections, count, sort):
@@ -342,12 +342,12 @@ def display_suites(collections, count, sort):
 
     rows = rows[:count]
 
-    print "Suites"
-    print "======"
-    print
+    print("Suites")
+    print("======")
+    print()
     headers = ["Total", "Fixture", "Test", "Count", "Failed", "Errors", "Skipped"]
     display_table([headers] + rows)
-    print
+    print()
 
 
 def display_tests(collections, count):
@@ -367,11 +367,11 @@ def display_tests(collections, count):
     rows.sort(key=skey)
     rows = rows[:count]
 
-    print "Tests"
-    print "====="
-    print
+    print("Tests")
+    print("=====")
+    print()
     display_table(rows)
-    print
+    print()
 
 
 def main():
@@ -381,7 +381,7 @@ def main():
         args.collection = ["eunit", "exunit", "mango", "javascript"]
 
     collections = []
-    for (name, pattern) in TEST_COLLECTIONS.items():
+    for name, pattern in TEST_COLLECTIONS.items():
         if name.lower() not in args.collection:
             continue
         collections.append(TestCollection(name, pattern))

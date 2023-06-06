@@ -1,9 +1,6 @@
 defmodule UpdateDocumentsTest do
   use CouchTestCase
 
-  @moduletag :docs
-  @moduletag kind: :single_node
-
   @ddoc %{
     _id: "_design/update",
     language: "javascript",

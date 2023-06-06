@@ -15,6 +15,8 @@
 -define(DESIGN_DOC_PREFIX, "_design/").
 -define(DEFAULT_COMPRESSION, snappy).
 
+-define(DEFAULT_HASH_ALGORITHM, sha256).
+
 -define(MIN_STR, <<"">>).
 -define(MAX_STR, <<255>>). % illegal utf string
 
@@ -22,6 +24,7 @@
 
 -define(JSON_ENCODE(V), couch_util:json_encode(V)).
 -define(JSON_DECODE(V), couch_util:json_decode(V)).
+-define(JSON_DECODE(V, O), couch_util:json_decode(V, O)).
 
 -define(IS_OLD_RECORD(V, R), (tuple_size(V) /= tuple_size(R))).
 
@@ -30,6 +33,7 @@
 -define(i2b(V), couch_util:integer_to_boolean(V)).
 -define(b2i(V), couch_util:boolean_to_integer(V)).
 -define(term_to_bin(T), term_to_binary(T, [{minor_version, 1}])).
+-define(term_to_bin(T, O), term_to_binary(T, O ++ [{minor_version, 1}])).
 -define(term_size(T), erlang:external_size(T, [{minor_version, 1}])).
 
 -define(DEFAULT_ATTACHMENT_CONTENT_TYPE, <<"application/octet-stream">>).
@@ -46,6 +50,8 @@
     <<"_users">>
 ]).
 
+-define(INTERACTIVE_EDIT, interactive_edit).
+-define(REPLICATED_CHANGES, replicated_changes).
 
 -type branch() :: {Key::term(), Value::term(), Tree::term()}.
 -type path() :: {Start::pos_integer(), branch()}.
@@ -189,11 +195,14 @@
 -record(proc, {
     pid,
     lang,
-    client = nil,
-    ddoc_keys = [],
+    client,
+    db_key,
+    ddoc_keys = #{},
     prompt_fun,
     set_timeout_fun,
-    stop_fun
+    stop_fun,
+    threshold_ts,
+    last_use_ts
 }).
 
 -record(leaf,  {
@@ -218,4 +227,3 @@
 -type user_ctx() :: #user_ctx{}.
 -type sec_props() :: [tuple()].
 -type sec_obj() :: {sec_props()}.
-

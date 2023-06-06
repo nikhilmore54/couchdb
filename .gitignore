@@ -1,4 +1,5 @@
 *.o
+*.asc
 *.sha256
 *.sha512
 *.snap
@@ -6,6 +7,10 @@
 *.pyc
 *.swp
 *.pdb
+*.obj
+*.dll
+*.lib
+*.exp
 *~
 .venv
 .DS_Store
@@ -13,15 +18,16 @@
 .rebar/
 .eunit/
 cover/
-core
+/core
 debian/
 log
 apache-couchdb-*/
 bin/
-config.erl
+/config.erl
 *.tar.gz
 *.tar.bz2
-dev/boot_node.beam
+dev/*.beam
+dev/devnode.*
 dev/lib/
 dev/logs/
 ebin/
@@ -34,11 +40,10 @@ rel/dev*
 rel/tmpdata
 share/server/main-coffee.js
 share/server/main.js
+share/server/main-ast-bypass.js
 share/www
-src/b64url/
 src/bear/
 src/certifi/
-src/config/
 src/couch/priv/couch_js/**/config.h
 src/couch/priv/couchjs
 src/couch/priv/couchspawnkillable
@@ -46,9 +51,6 @@ src/couch/priv/couch_ejson_compare/couch_ejson_compare.d
 src/couch/priv/couch_js/**/*.d
 src/couch/priv/icu_driver/couch_icu_driver.d
 src/mango/src/mango_cursor_text.nocompile
-src/docs/
-src/emilio/
-src/ets_lru/
 src/excoveralls/
 src/fauxton/
 src/folsom/
@@ -57,10 +59,7 @@ src/hqueue/
 src/hyper/
 src/ibrowse/
 src/idna/
-src/ioq/
 src/jiffy/
-src/ken/
-src/khash/
 src/meck/
 src/metrics/
 src/mimerl/
@@ -70,11 +69,13 @@ src/parse_trans/
 src/proper/
 src/rebar/
 src/recon/
-src/smoosh/
 src/snappy/
 src/ssl_verify_fun/
 src/triq/
 src/unicode_util_compat/
+src/file_system/
+src/rebar3/
+src/erlfmt/
 tmp/
 
 src/couch/*.o
@@ -118,6 +119,7 @@ src/mango/ebin/
 src/mango/test/*.pyc
 src/mango/nosetests.xml
 src/mango/venv/
+src/mango/.hypothesis/
 src/jwtf/.rebar3/
 test/javascript/junit.xml
 
@@ -127,3 +129,8 @@ test/javascript/junit.xml
 /src/httpotion/
 /src/jason/
 /src/junit_formatter/
+
+.idea
+*.lock
+
+.tool-versions

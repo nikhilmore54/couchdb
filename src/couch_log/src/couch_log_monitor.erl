@@ -15,7 +15,6 @@
 -behaviour(gen_server).
 -vsn(1).
 
-
 -export([
     start_link/0
 ]).
@@ -29,39 +28,30 @@
     code_change/3
 ]).
 
-
 -define(HANDLER_MOD, couch_log_error_logger_h).
-
 
 start_link() ->
     gen_server:start_link(?MODULE, [], []).
 
-
 init(_) ->
-    error_logger:start(),
+    % see https://erlang.org/doc/man/error_logger.html#add_report_handler-1
+    ok = error_logger:add_report_handler(?HANDLER_MOD),
     ok = gen_event:add_sup_handler(error_logger, ?HANDLER_MOD, []),
     {ok, nil}.
-
 
 terminate(_, _) ->
     ok.
 
-
 handle_call(_Msg, _From, St) ->
     {reply, ignored, St}.
-
 
 handle_cast(_Msg, St) ->
     {noreply, St}.
 
-
 handle_info({gen_event_EXIT, ?HANDLER_MOD, Reason}, St) ->
     {stop, Reason, St};
-
-
 handle_info(_Msg, St) ->
     {noreply, St}.
-
 
 code_change(_, State, _) ->
     {ok, State}.

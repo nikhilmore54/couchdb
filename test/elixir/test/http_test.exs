@@ -2,7 +2,6 @@ defmodule HttpTest do
   use CouchTestCase
 
   @moduletag :http
-  @moduletag kind: :single_node
 
   @tag :with_db
   test "location header", context do
@@ -31,7 +30,7 @@ defmodule HttpTest do
 
     server_config = [
       %{
-        :section => "httpd",
+        :section => "chttpd",
         :key => "x_forwarded_host",
         :value => "X-Host"
       }

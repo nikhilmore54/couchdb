@@ -1,0 +1,36 @@
+{
+    "name": "couchdb-dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            // Useful choices include:
+            // apache/couchdbci-debian:bullseye-erlang-25.0.2
+            // apache/couchdbci-debian:bullseye-erlang-24.3.4.2
+            // apache/couchdbci-debian:bullseye-erlang-23.3.4.15
+            //
+            "COUCHDB_IMAGE": "apache/couchdbci-debian:bullseye-erlang-24.3.4.10"
+        }
+    },
+
+    // We are using a volume mount to improve performance
+    // https://code.visualstudio.com/remote/advancedcontainers/improve-performance#_use-a-named-volume-for-your-entire-source-tree
+    //
+    // and eliminate test flake.
+    // https://github.com/apache/couchdb/discussions/4145
+    //
+    // Your code will not be bound to the host OS folder you started this project from.
+    // Your code will live inside the volume created for the container under /workspace.
+    "workspaceMount": "target=/workspaces/couchdb,type=volume",
+    "workspaceFolder": "/workspaces/couchdb",
+    "postCreateCommand": "./configure --enable-nouveau && make",
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "erlang-ls.erlang-ls",
+                "redhat.java"
+            ]
+        }
+    }
+}

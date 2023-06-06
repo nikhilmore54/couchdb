@@ -17,7 +17,9 @@
 include version.mk
 
 SHELL=cmd.exe
-REBAR=bin\rebar.cmd
+REBAR?=$(CURDIR)\bin\rebar.cmd
+PYTHON=python.exe
+ERLFMT?=$(CURDIR)\bin\erlfmt.cmd
 MAKE=make -f Makefile.win
 # REBAR?=$(shell where rebar.cmd)
 
@@ -76,18 +78,16 @@ DESTDIR=
 
 # Rebar options
 apps=
-skip_deps=folsom,meck,mochiweb,triq,proper,snappy,bcrypt,hyper
+skip_deps=folsom,meck,mochiweb,triq,proper,snappy,bcrypt,hyper,ibrowse,local
 suites=
 tests=
 
-# no sed on Windows, hard code since apps\suites\tests are empty
-EUNIT_OPTS=skip_deps=$(skip_deps)
-DIALYZE_OPTS=skip_deps=$(skip_deps)
+# no sed on Windows (per default), but powershell
+COMPILE_OPTS=$(shell powershell -command "('apps=${apps} ') -replace '[a-z_]+= ', ' '")
+EUNIT_OPTS=$(shell powershell -command "('skip_deps=${skip_deps} suites=${suites} tests=${tests} ') -replace '[a-z]+= ', ' '")
+DIALYZE_OPTS=$(shell powershell -command "('apps=${apps} skip_deps=${skip_deps} ') -replace '[a-z]+= ', ' '")
 
 EXUNIT_OPTS=$(subst $(comma),$(space),$(tests))
-
-#ignore javascript tests
-ignore_js_suites=
 
 TEST_OPTS=-c startup_jitter=0 -c default_security=admin_local
 
@@ -101,13 +101,19 @@ TEST_OPTS=-c startup_jitter=0 -c default_security=admin_local
 all: couch fauxton docs
 
 
+.PHONY: help
+# target: help - Print this help
+help:
+	@powershell -Command 'Select-String Makefile.win -Pattern "^# target: (?<name>.*) - (?<description>.*)" | ForEach-Object { ("{0,-22} - {1}" -f $$_.Matches[0].Groups["name"], $$_.Matches[0].Groups["description"]) } | Sort'
+
+
 ################################################################################
 # Building
 ################################################################################
 
 
 .PHONY: couch
-# target: couch - Build CouchDB core, use ERL_OPTS to provide custom compiler's options
+# target: couch - Build CouchDB core, use ERL_COMPILER_OPTIONS to provide custom compiler's options
 couch: config.erl
 	@set COUCHDB_VERSION=$(COUCHDB_VERSION) && set COUCHDB_GIT_SHA=$(COUCHDB_GIT_SHA) && $(REBAR) compile $(COMPILE_OPTS)
 	@copy src\couch\priv\couchjs.exe bin
@@ -133,11 +139,10 @@ fauxton: share\www
 
 .PHONY: check
 # target: check - Test everything
-check: all python-black
-	@$(MAKE) emilio
+check: all
 	@$(MAKE) eunit
 	@$(MAKE) mango-test
-	@$(MAKE) elixir
+	@$(MAKE) elixir-suite
 
 ifdef apps
 subdirs = $(apps)
@@ -148,56 +153,64 @@ endif
 .PHONY: eunit
 # target: eunit - Run EUnit tests, use EUNIT_OPTS to provide custom options
 eunit: export BUILDDIR = $(shell echo %cd%)
-eunit: export ERL_AFLAGS = $(shell echo "-config rel/files/eunit.config")
+eunit: export ERL_AFLAGS = -config $(shell echo "%cd%")/rel/files/eunit.config
 eunit: export COUCHDB_QUERY_SERVER_JAVASCRIPT = $(shell echo %cd%)/bin/couchjs $(shell echo %cd%)/share/server/main.js
 eunit: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
 eunit: couch
 	@set COUCHDB_VERSION=$(COUCHDB_VERSION) && set COUCHDB_GIT_SHA=$(COUCHDB_GIT_SHA) && $(REBAR) setup_eunit 2> nul
-	@cmd /c "FOR %d IN ($(subdirs)) DO set COUCHDB_VERSION=$(COUCHDB_VERSION) & set COUCHDB_GIT_SHA=$(COUCHDB_GIT_SHA) & $(REBAR) -r eunit $(EUNIT_OPTS) apps=%d"
+	@cmd /c "FOR %d IN ($(subdirs)) DO set COUCHDB_VERSION=$(COUCHDB_VERSION) & set COUCHDB_GIT_SHA=$(COUCHDB_GIT_SHA) & $(REBAR) -r eunit $(EUNIT_OPTS) apps=%d || exit /b 1"
 
 .PHONY: exunit
-# target: exunit - Run ExUnit tests
+# target: exunit - Run ExUnit tests, use EXUNIT_OPTS to provide custom options
 exunit: export BUILDDIR = $(shell echo %cd%)
 exunit: export MIX_ENV=test
-exunit: export ERL_LIBS = $(shell echo %cd%)\src
-exunit: export ERL_AFLAGS = -config $(shell echo %cd%)/rel/files/eunit.config
+exunit: export ERL_LIBS = $(shell echo %cd%)/src
+exunit: export ERL_AFLAGS = -config $(shell echo "%cd%")/rel/files/eunit.config
 exunit: export COUCHDB_QUERY_SERVER_JAVASCRIPT = $(shell echo %cd%)/bin/couchjs $(shell echo %cd%)/share/server/main.js
 exunit: couch elixir-init setup-eunit elixir-check-formatted elixir-credo
 	@mix test --cover --trace $(EXUNIT_OPTS)
 
-setup-eunit: export BUILDDIR = $(shell pwd)
-setup-eunit: export ERL_AFLAGS = "-config $(shell echo %cd%)/rel/files/eunit.config")
+setup-eunit: export BUILDDIR = $(shell echo %cd%)
+setup-eunit: export ERL_AFLAGS = -config $(shell echo "%cd%")/rel/files/eunit.config
 setup-eunit:
 	@$(REBAR) setup_eunit 2> nul
 
-just-eunit: export BUILDDIR = $(shell pwd)
-just-eunit: export ERL_AFLAGS = "-config $(shell echo %cd%)/rel/files/eunit.config")
+just-eunit: export BUILDDIR = $(shell echo %cd%)
+just-eunit: export ERL_AFLAGS = -config $(shell echo "%cd%")/rel/files/eunit.config
 just-eunit:
 	@$(REBAR) -r eunit $(EUNIT_OPTS)
 
-emilio:
-	@bin\emilio -c emilio.config src\ | python.exe bin\warnings_in_scope -s 3
+# target: erlfmt-check - Check Erlang source code formatting
+erlfmt-check: export ERLFMT_PATH = $(ERLFMT)
+erlfmt-check:
+	@$(PYTHON) dev\format_check.py
+
+# target: erlfmt-format - Apply Erlang source code format standards automatically
+erlfmt-format: export ERLFMT_PATH = $(ERLFMT)
+erlfmt-format:
+	@$(PYTHON) dev\format_all.py
 
 .venv/bin/black:
-	@python.exe -m venv .venv
-	@.venv\Scripts\pip3.exe install black || copy /b .venv\Scripts\black.exe +,,
+	@$(PYTHON) -m venv .venv
+	@.venv\Scripts\pip3.exe install black==23.3.0 || copy /b .venv\Scripts\black.exe +,,
 
-# Python code formatter - only runs if we're on Python 3.6 or greater
+# target: python-black - Check Python code formatting (requires Python >= 3.6)
 python-black: .venv/bin/black
-	@python.exe -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
+	@$(PYTHON) -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
 		echo 'Python formatter not supported on Python < 3.6; check results on a newer platform'
-	@python.exe -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
+	@$(PYTHON) -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
 		.venv\Scripts\black.exe --check \
-		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/rebar/pr2relnotes.py|src/fauxton" \
-		build-aux dev\run test\javascript\run src\mango\test src\docs\src\conf.py src\docs\ext .
+		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/erlfmt|src/rebar/pr2relnotes.py|src/fauxton" \
+		build-aux dev\run dev\format_*.py src\mango\test src\docs\src\conf.py src\docs\ext .
 
+# target: python-black-update - Apply Python source code format standards automatically (requires Python >= 3.6)
 python-black-update: .venv/bin/black
-	@python.exe -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
+	@$(PYTHON) -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
 		echo 'Python formatter not supported on Python < 3.6; check results on a newer platform'
-	@python.exe -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
+	@$(PYTHON) -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
 		.venv\Scripts\black.exe \
-		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/rebar/pr2relnotes.py|src/fauxton" \
-		build-aux dev\run test\javascript\run src\mango\test src\docs\src\conf.py src\docs\ext .
+		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/erlfmt|src/rebar/pr2relnotes.py|src/fauxton" \
+		build-aux dev\run dev\format_*.py src\mango\test src\docs\src\conf.py src\docs\ext .
 
 .PHONY: elixir
 elixir: export MIX_ENV=integration
@@ -226,49 +239,67 @@ elixir-cluster-with-quorum: elixir-init elixir-check-formatted elixir-credo devc
 	    --degrade-cluster 1 \
 		--no-eval 'mix test --trace --only with_quorum_test $(EXUNIT_OPTS)'
 
-.PHONY: elixir-check-formatted
-elixir-check-formatted: elixir-init
-	@mix format --check-formatted
+.PHONY: elixir-suite
+# target: elixir-suite - Run Elixir-based integration tests
+elixir-suite: export MIX_ENV=integration
+elixir-suite: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
+elixir-suite: elixir-init devclean
+	@dev\run -n 1 -q -a adm:pass \
+		--enable-erlang-views \
+		--no-join \
+		--locald-config test/elixir/test/config/test-config.ini \
+		--erlang-config rel/files/eunit.config \
+		--no-eval 'mix test --trace --include test\elixir\test\config\suite.elixir --exclude test\elixir\test\config\skip.elixir'
 
-# Credo is a static code analysis tool for Elixir.
-# We use it in our tests
-.PHONY: elixir-credo
-elixir-credo: elixir-init
+.PHONY: elixir-search
+# target: elixir-search - Run search tests, requires a running Clouseau instance
+elixir-search: export MIX_ENV=integration
+elixir-search: elixir-init devclean
+	@dev\run -n 1 -q -a adm:pass \
+		--locald-config test/config/test-config.ini \
+		--no-eval 'mix test --trace --include test/elixir/test/config/search.elixir'
+
+.PHONY: elixir-source-checks
+# target: elixir-source-checks - Check source code formatting of Elixir test files
+elixir-source-checks: export MIX_ENV=integration
+elixir-source-checks: elixir-init
+	@mix format --check-formatted
 	@mix credo
 
-
-.PHONY: javascript
-# target: javascript - Run JavaScript test suites or specific ones defined by suites option
-javascript: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
-javascript:
-	@$(MAKE) devclean
-	-@mkdir share\www\script\test
-ifeq ($(IN_RELEASE), true)
-	@copy test\javascript\tests\lorem*.txt share\www\script\test
-else
-	-@mkdir src\fauxton\dist\release\test
-	@copy test\javascript\tests\lorem*.txt src\fauxton\dist\release\test
-endif
-	@python dev\run -n 1 -q --with-admin-party-please \
-		    --enable-erlang-views \
-            $(TEST_OPTS) \
-            'python test\javascript\run --suites "$(suites)" \
-            --ignore "$(ignore_js_suites)"'
-
+.PHONY: build-report
+# target: build-report - Generate a build report
+build-report:
+	@$(PYTHON) build-aux/show-test-results.py --suites=10 --tests=10 > test-results.log
 
 .PHONY: check-qs
 # target: check-qs - Run query server tests (ruby and rspec required!)
 check-qs:
 	@QS_LANG=js rspec test\view_server\query_server_spec.rb
 
+.PHONY: list-eunit-apps
+# target: list-eunit-apps - List EUnit target apps
+list-eunit-apps:
+	@powershell -Command 'Get-ChildItem -Path src -Recurse -Filter "*_tests?.erl" | Resolve-Path -Relative | ForEach-Object { $$_.Split("\") | Select -Skip 2 -First 1 } | Sort -Unique'
+
+
+.PHONY: list-eunit-suites
+# target: list-eunit-suites - List EUnit target test suites
+list-eunit-suites:
+	@powershell -Command 'Get-ChildItem -Path src -Recurse -Filter "*_tests?.erl" | ForEach-Object { "{0}" -f $$_.BaseName } | Sort'
+
 
 .PHONY: mango-test
+# target: mango-test - Run Mango tests
 mango-test: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
 mango-test: devclean all
 	@cd src\mango && \
 		python.exe -m venv .venv && \
 		.venv\Scripts\pip.exe install -r requirements.txt
-	@cd src\mango && .venv\Scripts\python.exe ..\..\dev\run -n 1 --admin=testuser:testpass .venv\Scripts\nosetests
+	@cd src\mango && \
+		..\..\dev\run $(TEST_OPTS) \
+		-n 1 \
+		--admin=adm:pass \
+		"env COUCH_USER=adm COUCH_PASS=pass .venv\Scripts\nose2 $(MANGO_TEST_OPTS)"
 
 
 ################################################################################
@@ -293,6 +324,10 @@ check-plt:
 dialyze: .rebar
 	@$(REBAR) -r dialyze $(DIALYZE_OPTS)
 
+.PHONY: find_bugs
+# target: find_bugs - Find unused exports etc
+find_bugs:
+	@$(REBAR) --keep-going --recursive xref $(DIALYZE_OPTS)
 
 .PHONY: introspect
 # target: introspect - Check for commits difference between rebar.config and repository
@@ -355,7 +390,7 @@ endif
 	@echo .
 
 .PHONY: install
-# target: install- install CouchDB :)
+# target: install - Install CouchDB :)
 install: release
 	@echo .
 	@echo Notice: There is no 'make install' command for CouchDB 2.x+.
@@ -380,7 +415,7 @@ clean:
 	-@rmdir /s/q src\*\.rebar
 	-@del /f/q/s src\*.dll
 	-@del /f/q src\couch\priv\*.exe
-	-@del /f/q share\server\main.js share\server\main-coffee.js
+	-@del /f/q share\server\main.js share\server\main-ast-bypass.js share\server\main-coffee.js
 	-@rmdir /s/q tmp
 	-@rmdir /s/q dev\data
 	-@rmdir /s/q dev\lib
@@ -426,7 +461,7 @@ devclean:
 config.erl:
 	@echo Apache CouchDB has not been configured.
 	@echo Try "powershell -ExecutionPolicy Bypass .\configure.ps1 -?" for help.
-	@echo You probably want "powershell -ExecutionPolicy Bypass .\configure.ps1 -WithCurl".
+	@echo You probably want "powershell -ExecutionPolicy Bypass .\configure.ps1".
 	@echo.
 	@false
 
@@ -441,7 +476,7 @@ endif
 share\www:
 ifeq ($(with_fauxton), 1)
 	@echo 'Building Fauxton'
-	@cd src\fauxton && npm install --production && .\node_modules\.bin\grunt couchdb
+	@cd src\fauxton && npm install && .\node_modules\.bin\grunt couchdb
 endif
 
 derived:

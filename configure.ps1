@@ -5,12 +5,11 @@
     This command is responsible for generating the build
     system for Apache CouchDB.
 
-  -WithCurl                  request that couchjs is linked to cURL (default false)
   -DisableFauxton            request build process skip building Fauxton (default false)
   -DisableDocs               request build process skip building documentation (default false)
   -SkipDeps                  do not update Erlang dependencies (default false)
   -CouchDBUser USER          set the username to run as (defaults to current user)
-  -SpiderMonkeyVersion VSN   select the version of SpiderMonkey to use (defaults to 1.8.5)
+  -SpiderMonkeyVersion VSN   select the version of SpiderMonkey to use (default 91)
 
   Installation directories:
   -Prefix PREFIX             install architecture-independent files in PREFIX
@@ -42,15 +41,16 @@
 
 Param(
     [switch]$Test = $false,
-    [switch]$WithCurl = $false, # request that couchjs is linked to cURL (default false)
     [switch]$DisableFauxton = $false, # do not build Fauxton
     [switch]$DisableDocs = $false, # do not build any documentation or manpages
     [switch]$SkipDeps = $false, # do not update erlang dependencies
+    [switch]$DisableProper = $false, # a compilation pragma. proper is a kind of automated test suite
+    [switch]$EnableErlangMD5 = $false, # don't use Erlang for md5 hash operations by default
 
     [ValidateNotNullOrEmpty()]
     [string]$CouchDBUser = [Environment]::UserName, # set the username to run as (defaults to current user)
     [ValidateNotNullOrEmpty()]
-    [string]$SpiderMonkeyVersion = "1.8.5", # select the version of SpiderMonkey to use (default 1.8.5)
+    [string]$SpiderMonkeyVersion = "91", # select the version of SpiderMonkey to use (default 91)
     [ValidateNotNullOrEmpty()]
     [string]$Prefix = "C:\Program Files\Apache\CouchDB", # install architecture-independent file location (default C:\Program Files\Apache\CouchDB)
     [ValidateNotNullOrEmpty()]
@@ -105,6 +105,22 @@ If ($Test) {
     exit 0
 }
 
+# Use the MSVC linker to determine if the respective SpiderMonkey library
+# is available on the linker path.  This heuristic is taken from
+# src/couch/rebar.config.script, please keep them in sync.
+If ($SpiderMonkeyVersion -eq "1.8.5") {
+    $SpiderMonkeyLib = "mozjs185-1.0.lib"
+}
+else {
+    $SpiderMonkeyLib = "mozjs-$SpiderMonkeyVersion.lib"
+}
+
+&link $SpiderMonkeyLib /SUBSYSTEM:CONSOLE /NOENTRY /DLL /OUT:NUL *> $null
+If ($LASTEXITCODE -ne 0) {
+    Write-Output "ERROR: SpiderMonkey $SpiderMonkeyVersion is not found. Please specify with -SpiderMonkeyVersion."
+    exit 1
+}
+
 # Translate ./configure variables to CouchDB variables
 $PackageAuthorName="The Apache Software Foundation"
 $InstallDir="$LibDir\couchdb"
@@ -112,6 +128,8 @@ $LogFile="$LogDir\couch.log"
 $BuildFauxton = [int](-not $DisableFauxton)
 $BuildDocs = [int](-not $DisableDocs)
 $Hostname = [System.Net.Dns]::GetHostEntry([string]"localhost").HostName
+$WithProper = (-not $DisableProper).ToString().ToLower()
+$ErlangMD5 = ($EnableErlangMD5).ToString().ToLower()
 
 Write-Verbose "==> configuring couchdb in rel\couchdb.config"
 $CouchDBConfig = @"
@@ -140,6 +158,7 @@ $CouchDBConfig = @"
 {node_name, "-name couchdb@localhost"}.
 {cluster_port, 5984}.
 {backend_port, 5986}.
+{prometheus_port, 17986}.
 "@
 $CouchDBConfig | Out-File "$rootdir\rel\couchdb.config" -encoding ascii
 
@@ -183,12 +202,18 @@ spidermonkey_version = $SpiderMonkeyVersion
 "@
 $InstallMk | Out-File "$rootdir\install.mk" -encoding ascii
 
-$lowercurl = "$WithCurl".ToLower()
 $ConfigERL = @"
-{with_curl, $lowercurl}.
+{with_proper, $WithProper}.
+{erlang_md5, $ErlangMD5}.
 {spidermonkey_version, "$SpiderMonkeyVersion"}.
 "@
 $ConfigERL | Out-File "$rootdir\config.erl" -encoding ascii
+
+if (((Get-Command "rebar.cmd" -ErrorAction SilentlyContinue) -eq $null) -or
+    ((Get-Command "rebar3.cmd" -ErrorAction SilentlyContinue) -eq $null) -or
+    ((Get-Command "erlfmt.cmd" -ErrorAction SilentlyContinue) -eq $null)) {
+  $env:Path += ";$rootdir\bin"
+}
 
 # check for rebar; if not found, build it and add it to our path
 if ((Get-Command "rebar.cmd" -ErrorAction SilentlyContinue) -eq $null)
@@ -202,7 +227,39 @@ if ((Get-Command "rebar.cmd" -ErrorAction SilentlyContinue) -eq $null)
    cp $rootdir\src\rebar\rebar $rootdir\bin\rebar
    cp $rootdir\src\rebar\rebar.cmd $rootdir\bin\rebar.cmd
    make -C $rootdir\src\rebar clean
-   $env:Path += ";$rootdir\bin"
+}
+
+# check for rebar3; if not found, build it and add it to our path
+if ((Get-Command "rebar3.cmd" -ErrorAction SilentlyContinue) -eq $null)
+{
+   Write-Verbose "==> rebar3.cmd not found; bootstrapping..."
+   if (-Not (Test-Path "src\rebar3"))
+   {
+      git clone --depth 1 https://github.com/erlang/rebar3.git $rootdir\src\rebar3
+   }
+   cd src\rebar3
+   .\bootstrap.ps1
+   cp $rootdir\src\rebar3\rebar3 $rootdir\bin\rebar3
+   cp $rootdir\src\rebar3\rebar3.cmd $rootdir\bin\rebar3.cmd
+   cp $rootdir\src\rebar3\rebar3.ps1 $rootdir\bin\rebar3.ps1
+   make -C $rootdir\src\rebar3 clean
+   cd ..\..
+}
+
+# check for erlfmt; if not found, build it and add it to our path
+if ((Get-Command "erlfmt.cmd" -ErrorAction SilentlyContinue) -eq $null)
+{
+   Write-Verbose "==> erlfmt.cmd not found; bootstrapping..."
+   if (-Not (Test-Path "src\erlfmt"))
+   {
+      git clone --depth 1 https://github.com/WhatsApp/erlfmt.git $rootdir\src\erlfmt
+   }
+   cd src\erlfmt
+   rebar3 as release escriptize
+   cp $rootdir\src\erlfmt\_build\release\bin\erlfmt $rootdir\bin\erlfmt
+   cp $rootdir\src\erlfmt\_build\release\bin\erlfmt.cmd $rootdir\bin\erlfmt.cmd
+   make -C $rootdir\src\erlfmt clean
+   cd ..\..
 }
 
 # check for emilio; if not found, get it and build it
@@ -227,4 +284,4 @@ if ( (Test-Path .git -PathType Container) -and (-not $SkipDeps) ) {
 
 Pop-Location
 [Environment]::CurrentDirectory = $PWD
-Write-Verbose "You have configured Apache CouchDB, time to relax. Relax."
+Write-Output "You have configured Apache CouchDB, time to relax. Relax."

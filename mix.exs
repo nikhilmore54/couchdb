@@ -20,6 +20,29 @@ defmodule CoverTool do
   end
 end
 
+defmodule Mix.Tasks.Suite do
+  @moduledoc """
+  Helper task to create `suites.elixir` file. It suppose to be used as follows
+  ```
+  MIX_ENV=integration mix suite > test/elixir/test/config/suite.elixir
+  ```
+  """
+  use Mix.Task
+  @shortdoc "Outputs all available integration tests"
+  def run(_) do
+    Path.wildcard(Path.join(Mix.Project.build_path(), "/**/ebin"))
+    |> Enum.filter(&File.dir?/1)
+    |> Enum.map(&Code.append_path/1)
+
+    tests =
+      Couch.Test.Suite.list()
+      |> Enum.sort()
+      |> Couch.Test.Suite.group_by()
+
+    IO.puts(Couch.Test.Suite.pretty_print(tests))
+  end
+end
+
 defmodule CouchDBTest.Mixfile do
   use Mix.Project
 
@@ -27,7 +50,7 @@ defmodule CouchDBTest.Mixfile do
     [
       app: :couchdbtest,
       version: "0.1.0",
-      elixir: "~> 1.5",
+      elixir: "~> 1.13",
       lockfile: Path.expand("mix.lock", __DIR__),
       deps_path: Path.expand("src", __DIR__),
       build_path: Path.expand("_build", __DIR__),
@@ -61,17 +84,31 @@ defmodule CouchDBTest.Mixfile do
 
   # Run "mix help deps" to learn about dependencies.
   defp deps() do
-    [
+    deps_list = [
       {:junit_formatter, "~> 3.0", only: [:dev, :test, :integration]},
       {:httpotion, ">= 3.1.3", only: [:dev, :test, :integration], runtime: false},
       {:excoveralls, "~> 0.12", only: :test},
-      {:b64url, path: Path.expand("src/b64url", __DIR__)},
-      {:jiffy, path: Path.expand("src/jiffy", __DIR__)},
-      {:jwtf, path: Path.expand("src/jwtf", __DIR__)},
-      {:ibrowse,
-       path: Path.expand("src/ibrowse", __DIR__), override: true, compile: false},
-      {:credo, "~> 1.4.0", only: [:dev, :test, :integration], runtime: false}
+      {:b64url, path: path("b64url")},
+      {:jiffy, path: path("jiffy")},
+      {:jwtf, path: path("jwtf")},
+      {:ibrowse, path: path("ibrowse"), override: true},
+      {:credo, "~> 1.6.4", only: [:dev, :test, :integration], runtime: false}
     ]
+
+    # Some deps may be missing during source check
+    # Besides we don't want to spend time checking them anyway
+    List.foldl([:b64url, :jiffy, :jwtf, :ibrowse], deps_list, fn dep, acc ->
+      if File.dir?(acc[dep][:path]) do
+        acc
+      else
+        List.keydelete(acc, dep, 0)
+      end
+    end)
+  end
+
+  defp path(app) do
+    lib_dir = Path.expand("src", __DIR__)
+    Path.expand(app, lib_dir)
   end
 
   def get_test_paths(:test) do
@@ -108,6 +145,7 @@ defmodule CouchDBTest.Mixfile do
       "ssl_verify_fun",
       "unicode_util_compat",
       "b64url",
+      "exxhash",
       "bear",
       "mochiweb",
       "snappy",
@@ -118,8 +156,7 @@ defmodule CouchDBTest.Mixfile do
       "khash",
       "hyper",
       "fauxton",
-      "folsom",
-      "hqueue"
+      "folsom"
     ]
 
     deps |> Enum.map(fn app -> "src/#{app}" end)

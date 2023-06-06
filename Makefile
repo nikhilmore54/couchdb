@@ -17,6 +17,7 @@
 include version.mk
 
 REBAR?=$(shell echo `pwd`/bin/rebar)
+ERLFMT?=$(shell echo `pwd`/bin/erlfmt)
 
 # Handle the following scenarios:
 #   1. When building from a tarball, use version.mk.
@@ -72,7 +73,7 @@ DESTDIR=
 
 # Rebar options
 apps=
-skip_deps=folsom,meck,mochiweb,triq,proper,snappy,bcrypt,hyper
+skip_deps=folsom,meck,mochiweb,triq,proper,snappy,bcrypt,hyper,ibrowse
 suites=
 tests=
 
@@ -90,9 +91,6 @@ DIALYZE_OPTS=$(shell echo "\
 	" | sed -e 's/[a-z]\{1,\}= / /g')
 EXUNIT_OPTS=$(subst $(comma),$(space),$(tests))
 
-#ignore javascript tests
-ignore_js_suites=
-
 TEST_OPTS="-c 'startup_jitter=0' -c 'default_security=admin_local'"
 
 ################################################################################
@@ -102,7 +100,7 @@ TEST_OPTS="-c 'startup_jitter=0' -c 'default_security=admin_local'"
 
 .PHONY: all
 # target: all - Build everything
-all: couch fauxton docs
+all: couch fauxton docs escriptize nouveau
 
 
 .PHONY: help
@@ -111,7 +109,7 @@ help:
 	@egrep "^# target: " Makefile \
 		| sed -e 's/^# target: //g' \
 		| sort \
-		| awk '{printf("    %-20s", $$1); $$1=$$2=""; print "-" $$0}'
+		| awk '{printf("    %-21s", $$1); $$1=$$2=""; print "-" $$0}'
 
 
 ################################################################################
@@ -120,7 +118,7 @@ help:
 
 
 .PHONY: couch
-# target: couch - Build CouchDB core, use ERL_OPTS to provide custom compiler's options
+# target: couch - Build CouchDB core, use ERL_COMPILER_OPTIONS to provide custom compiler's options
 couch: config.erl
 	@COUCHDB_VERSION=$(COUCHDB_VERSION) COUCHDB_GIT_SHA=$(COUCHDB_GIT_SHA) $(REBAR) compile $(COMPILE_OPTS)
 	@cp src/couch/priv/couchjs bin/
@@ -139,6 +137,13 @@ endif
 fauxton: share/www
 
 
+.PHONY: escriptize
+# target: escriptize - Build CLI tools
+escriptize: couch
+	@$(REBAR) -r escriptize apps=weatherreport
+	@cp src/weatherreport/weatherreport bin/weatherreport
+
+
 ################################################################################
 # Testing
 ################################################################################
@@ -146,11 +151,13 @@ fauxton: share/www
 
 .PHONY: check
 # target: check - Test everything
-check: all python-black
-	@$(MAKE) emilio
+check: all
+	@$(MAKE) exunit
 	@$(MAKE) eunit
 	@$(MAKE) mango-test
-	@$(MAKE) elixir
+	@$(MAKE) elixir-suite
+	@$(MAKE) weatherreport-test
+	@$(MAKE) nouveau-test
 
 ifdef apps
 subdirs = $(apps)
@@ -172,14 +179,15 @@ eunit: couch
 
 
 .PHONY: exunit
-# target: exunit - Run ExUnit tests
+# target: exunit - Run ExUnit tests, use EXUNIT_OPTS to provide custom options
 exunit: export BUILDDIR = $(shell pwd)
 exunit: export MIX_ENV=test
 exunit: export ERL_LIBS = $(shell pwd)/src
 exunit: export ERL_AFLAGS = -config $(shell pwd)/rel/files/eunit.config
 exunit: export COUCHDB_QUERY_SERVER_JAVASCRIPT = $(shell pwd)/bin/couchjs $(shell pwd)/share/server/main.js
-exunit: couch elixir-init setup-eunit elixir-check-formatted elixir-credo
-	@mix test --cover --trace $(EXUNIT_OPTS)
+exunit: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
+exunit: couch elixir-init setup-eunit
+	@mix test --trace $(EXUNIT_OPTS)
 
 setup-eunit: export BUILDDIR = $(shell pwd)
 setup-eunit: export ERL_AFLAGS = -config $(shell pwd)/rel/files/eunit.config
@@ -198,111 +206,99 @@ soak-eunit: couch
 	@$(REBAR) setup_eunit 2> /dev/null
 	while [ $$? -eq 0 ] ; do $(REBAR) -r eunit $(EUNIT_OPTS) ; done
 
-emilio:
-	@bin/emilio -c emilio.config src/ | bin/warnings_in_scope -s 3
+# target: erlfmt-check - Check Erlang source code formatting
+erlfmt-check:
+	@ERLFMT_PATH=$(ERLFMT) python3 dev/format_check.py
+
+# target: erlfmt-format - Apply Erlang source code format standards automatically
+erlfmt-format:
+	@ERLFMT_PATH=$(ERLFMT) python3 dev/format_all.py
 
 .venv/bin/black:
 	@python3 -m venv .venv
-	@.venv/bin/pip3 install black || touch .venv/bin/black
+	@.venv/bin/pip3 install black==23.3.0 || touch .venv/bin/black
 
-# Python code formatter - only runs if we're on Python 3.6 or greater
+# target: python-black - Check Python code formatting (requires Python >= 3.6)
 python-black: .venv/bin/black
 	@python3 -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
 	       echo "Python formatter not supported on Python < 3.6; check results on a newer platform"
 	@python3 -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
 		LC_ALL=C.UTF-8 LANG=C.UTF-8 .venv/bin/black --check \
-		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/rebar/pr2relnotes.py|src/fauxton" \
-		build-aux/*.py dev/run test/javascript/run src/mango/test/*.py src/docs/src/conf.py src/docs/ext/*.py .
+		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/erlfmt|src/jiffy|src/rebar/pr2relnotes.py|src/fauxton" \
+		build-aux/*.py dev/run dev/format_*.py src/mango/test/*.py src/docs/src/conf.py src/docs/ext/*.py .
 
+# target: python-black-update - Apply Python source code format standards automatically (requires Python >= 3.6)
 python-black-update: .venv/bin/black
 	@python3 -c "import sys; exit(1 if sys.version_info < (3,6) else 0)" || \
 	       echo "Python formatter not supported on Python < 3.6; check results on a newer platform"
 	@python3 -c "import sys; exit(1 if sys.version_info >= (3,6) else 0)" || \
 		LC_ALL=C.UTF-8 LANG=C.UTF-8 .venv/bin/black \
 		--exclude="build/|buck-out/|dist/|_build/|\.git/|\.hg/|\.mypy_cache/|\.nox/|\.tox/|\.venv/|src/rebar/pr2relnotes.py|src/fauxton" \
-		build-aux/*.py dev/run test/javascript/run src/mango/test/*.py src/docs/src/conf.py src/docs/ext/*.py .
+		build-aux/*.py dev/run src/mango/test/*.py src/docs/src/conf.py src/docs/ext/*.py .
 
 .PHONY: elixir
 elixir: export MIX_ENV=integration
 elixir: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
-elixir: elixir-init elixir-check-formatted elixir-credo devclean
+elixir: elixir-init devclean
 	@dev/run "$(TEST_OPTS)" -a adm:pass -n 1 \
 		--enable-erlang-views \
 		--locald-config test/elixir/test/config/test-config.ini \
 		--no-eval 'mix test --trace --exclude without_quorum_test --exclude with_quorum_test $(EXUNIT_OPTS)'
 
 .PHONY: elixir-init
-elixir-init: MIX_ENV=test
+elixir-init: MIX_ENV=integration
 elixir-init: config.erl
-	@mix local.rebar --force && mix local.hex --force && mix deps.get
+	@mix local.rebar --force rebar3 ./bin/rebar3 && mix local.hex --force && mix deps.get
 
 .PHONY: elixir-cluster-without-quorum
 elixir-cluster-without-quorum: export MIX_ENV=integration
-elixir-cluster-without-quorum: elixir-init elixir-check-formatted elixir-credo devclean
+elixir-cluster-without-quorum: elixir-init devclean
 	@dev/run -n 3 -q -a adm:pass \
 		--degrade-cluster 2 \
 		--no-eval 'mix test --trace --only without_quorum_test $(EXUNIT_OPTS)'
 
 .PHONY: elixir-cluster-with-quorum
 elixir-cluster-with-quorum: export MIX_ENV=integration
-elixir-cluster-with-quorum: elixir-init elixir-check-formatted elixir-credo devclean
+elixir-cluster-with-quorum: elixir-init devclean
 	@dev/run -n 3 -q -a adm:pass \
 		--degrade-cluster 1 \
 		--no-eval 'mix test --trace --only with_quorum_test $(EXUNIT_OPTS)'
 
-.PHONY: elixir-check-formatted
-elixir-check-formatted: elixir-init
-	@mix format --check-formatted
+.PHONY: elixir-suite
+# target: elixir-suite - Run Elixir-based integration tests
+elixir-suite: export MIX_ENV=integration
+elixir-suite: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
+elixir-suite: elixir-init devclean
+	@dev/run -n 1 -q -a adm:pass \
+		--enable-erlang-views \
+		--no-join \
+		--locald-config test/elixir/test/config/test-config.ini \
+		--erlang-config rel/files/eunit.config \
+		--no-eval 'mix test --trace --include test/elixir/test/config/suite.elixir --exclude test/elixir/test/config/skip.elixir'
 
-# Credo is a static code analysis tool for Elixir.
-# We use it in our tests
-.PHONY: elixir-credo
-elixir-credo: elixir-init
+.PHONY: elixir-search
+# target: elixir-search - Run search tests, requires a running Clouseau instance
+elixir-search: export MIX_ENV=integration
+elixir-search: elixir-init devclean
+	@dev/run -n 1 -q -a adm:pass \
+		--locald-config test/config/test-config.ini \
+		--no-eval 'mix test --trace --include test/elixir/test/config/search.elixir'
+
+.PHONY: elixir-source-checks
+# target: elixir-source-checks - Check source code formatting of Elixir test files
+elixir-source-checks: export MIX_ENV=integration
+elixir-source-checks: elixir-init
+	@mix format --check-formatted
 	@mix credo
 
-.PHONY: javascript
-# target: javascript - Run JavaScript test suites or specific ones defined by suites option
-javascript: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
-javascript:
-
-	@$(MAKE) devclean
-	@mkdir -p share/www/script/test
-ifeq ($(IN_RELEASE), true)
-	@cp test/javascript/tests/lorem*.txt share/www/script/test/
-else
-	@mkdir -p src/fauxton/dist/release/test
-	@cp test/javascript/tests/lorem*.txt src/fauxton/dist/release/test/
-endif
-	@dev/run -n 1 -q --with-admin-party-please \
-            --enable-erlang-views \
-            "$(TEST_OPTS)" \
-            'test/javascript/run --suites "$(suites)" \
-            --ignore "$(ignore_js_suites)"'
-
-
-.PHONY: soak-javascript
-soak-javascript: export COUCHDB_TEST_ADMIN_PARTY_OVERRIDE=1
-soak-javascript:
-	@mkdir -p share/www/script/test
-ifeq ($(IN_RELEASE), true)
-	@cp test/javascript/tests/lorem*.txt share/www/script.test/
-else
-	@mkdir -p src/fauxton/dist/release/test
-	@cp test/javascript/tests/lorem*.txt src/fauxton/dist/release/test/
-endif
-	@rm -rf dev/lib
-	while [ $$? -eq 0 ]; do \
-		dev/run -n 1 -q --with-admin-party-please \
-				"$(TEST_OPTS)" \
-				'test/javascript/run --suites "$(suites)" \
-				--ignore "$(ignore_js_suites)"'  \
-	done
-
 .PHONY: build-report
-# target: build-report - Generate and upload a build report
+# target: build-report - Generate a build report
 build-report:
-	build-aux/show-test-results.py --suites=10 --tests=10 > test-results.log
-	build-aux/logfile-uploader.py
+	build-aux/show-test-results.py --suites=10 --tests=10 > test-results.log || true
+	cat ./dev/logs/node1.log || true
+	cat ./dev/logs/nouveau.log || true
+	cat ./tmp/couch.log || true
+	cat test-results.log || true
 
 .PHONY: check-qs
 # target: check-qs - Run query server tests (ruby and rspec required!)
@@ -313,7 +309,7 @@ check-qs:
 .PHONY: list-eunit-apps
 # target: list-eunit-apps - List EUnit target apps
 list-eunit-apps:
-	@find ./src/ -type f -name *_test.erl -o -name *_tests.erl \
+	@find ./src -type f -name *_test.erl -o -name *_tests.erl \
 		| cut -d '/' -f 3 \
 		| sort -u
 
@@ -321,15 +317,7 @@ list-eunit-apps:
 .PHONY: list-eunit-suites
 # target: list-eunit-suites - List EUnit target test suites
 list-eunit-suites:
-	@find ./src/ -type f -name *_test.erl -o -name *_tests.erl -exec basename {} \; \
-		| cut -d '.' -f -1 \
-		| sort
-
-
-.PHONY: list-js-suites
-# target: list-js-suites - List JavaScript test suites
-list-js-suites:
-	@find ./test/javascript/tests/ -type f -name *.js -exec basename {} \; \
+	@find ./src -type f -name *_test.erl -o -name *_tests.erl -exec basename {} \; \
 		| cut -d '.' -f -1 \
 		| sort
 
@@ -347,7 +335,18 @@ mango-test: devclean all
 	@cd src/mango && \
 		python3 -m venv .venv && \
 		.venv/bin/python3 -m pip install -r requirements.txt
-	@cd src/mango && ../../dev/run "$(TEST_OPTS)" -n 1 --admin=testuser:testpass '.venv/bin/python3 -m nose --with-xunit'
+	@cd src/mango && \
+		../../dev/run "$(TEST_OPTS)" \
+		-n 1 \
+		--admin=adm:pass \
+		'COUCH_USER=adm COUCH_PASS=pass .venv/bin/python3 -m nose2 $(MANGO_TEST_OPTS)'
+
+
+.PHONY: weatherreport-test
+# target: weatherreport-test - Run weatherreport against dev cluster
+weatherreport-test: devclean escriptize
+	@dev/run -n 1 -a adm:pass --no-eval \
+		'bin/weatherreport --etc dev/lib/node1/etc --level error'
 
 ################################################################################
 # Developing
@@ -371,6 +370,11 @@ check-plt:
 dialyze: .rebar
 	@$(REBAR) -r dialyze $(DIALYZE_OPTS)
 
+
+.PHONY: find_bugs
+# target: find_bugs - Find unused exports etc
+find_bugs:
+	@$(REBAR) --keep-going --recursive xref $(DIALYZE_OPTS)
 
 .PHONY: introspect
 # target: introspect - Check for commits difference between rebar.config and repository
@@ -406,6 +410,7 @@ release: all
 	@echo "Installing CouchDB into rel/couchdb/ ..."
 	@rm -rf rel/couchdb
 	@$(REBAR) generate # make full erlang release
+	@cp bin/weatherreport rel/couchdb/bin/weatherreport
 
 ifeq ($(with_fauxton), 1)
 	@mkdir -p rel/couchdb/share/
@@ -426,6 +431,12 @@ else
 endif
 endif
 
+ifeq ($(with_nouveau), 1)
+	@mkdir -p rel/couchdb/nouveau/
+	@cp nouveau/build/libs/server-*-dist.jar rel/couchdb/nouveau/
+	@cp nouveau/nouveau.yaml rel/couchdb/nouveau/
+endif
+
 	@echo "... done"
 	@echo
 	@echo "    You can now copy the rel/couchdb directory anywhere on your system."
@@ -433,7 +444,7 @@ endif
 	@echo
 
 .PHONY: install
-# target: install- install CouchDB :)
+# target: install - Install CouchDB :)
 install: release
 	@echo
 	@echo "Notice: There is no 'make install' command for CouchDB 2.x+."
@@ -454,16 +465,21 @@ clean:
 	@$(REBAR) -r clean
 	@rm -rf .rebar/
 	@rm -f bin/couchjs
+	@rm -f bin/weatherreport
 	@rm -rf src/*/ebin
 	@rm -rf src/*/.rebar
 	@rm -rf src/*/priv/*.so
 	@rm -rf src/couch/priv/{couchspawnkillable,couchjs}
-	@rm -rf share/server/main.js share/server/main-coffee.js
+	@rm -rf share/server/main.js share/server/main-ast-bypass.js share/server/main-coffee.js
 	@rm -rf tmp dev/data dev/lib dev/logs
 	@rm -rf src/mango/.venv
 	@rm -f src/couch/priv/couchspawnkillable
 	@rm -f src/couch/priv/couch_js/config.h
-	@rm -f dev/boot_node.beam dev/pbkdf2.pyc log/crash.log
+	@rm -f dev/*.beam dev/devnode.* dev/pbkdf2.pyc log/crash.log
+	@rm -f src/couch_dist/certs/out
+ifeq ($(with_nouveau), 1)
+	@cd nouveau && ./gradlew clean
+endif
 
 
 .PHONY: distclean
@@ -503,14 +519,14 @@ config.erl:
 
 src/docs/build:
 ifeq ($(with_docs), 1)
-	@cd src/docs; $(MAKE)
+	@cd src/docs; ./setup.sh ; $(MAKE)
 endif
 
 
 share/www:
 ifeq ($(with_fauxton), 1)
 	@echo "Building Fauxton"
-	@cd src/fauxton && npm install --production && ./node_modules/grunt-cli/bin/grunt couchdb
+	@cd src/fauxton && npm install && ./node_modules/grunt-cli/bin/grunt couchdb
 endif
 
 
@@ -524,3 +540,33 @@ derived:
 	@echo "ON_TAG:                 $(ON_TAG)"
 	@echo "REL_TAG:                $(REL_TAG)"
 	@echo "SUB_VSN:                $(SUB_VSN)"
+
+################################################################################
+# Nouveau
+################################################################################
+
+.PHONY: nouveau
+# Build nouveau
+nouveau:
+ifeq ($(with_nouveau), 1)
+	@cd nouveau && ./gradlew build -x test
+endif
+
+.PHONY: nouveau-test
+nouveau-test: nouveau-test-gradle nouveau-test-elixir
+
+.PHONY: nouveau-test-gradle
+nouveau-test-gradle: couch nouveau
+ifeq ($(with_nouveau), 1)
+	@cd nouveau && ./gradlew test
+endif
+
+.PHONY: nouveau-test-elixir
+nouveau-test-elixir: export MIX_ENV=integration
+nouveau-test-elixir: elixir-init devclean
+nouveau-test-elixir: couch nouveau
+ifeq ($(with_nouveau), 1)
+	@dev/run -n 1 -q -a adm:pass --with-nouveau \
+		--locald-config test/config/test-config.ini \
+		--no-eval 'mix test --trace --include test/elixir/test/config/nouveau.elixir'
+endif

@@ -25,7 +25,6 @@ function create_sandbox() {
     sandbox.send = Render.send;
     sandbox.getRow = Render.getRow;
     sandbox.isArray = isArray;
-    sandbox.index = Dreyfus.index;
   } catch (e) {
     var sandbox = {};
   }
@@ -38,6 +37,18 @@ function create_filter_sandbox() {
   return sandbox;
 };
 
+function create_dreyfus_sandbox() {
+  var sandbox = create_sandbox();
+  sandbox.index = Dreyfus.index;
+  return sandbox;
+}
+
+function create_nouveau_sandbox() {
+  var sandbox = create_sandbox();
+  sandbox.index = Nouveau.index;
+  return sandbox;
+}
+
 // Commands are in the form of json arrays:
 // ["commandname",..optional args...]\n
 //
@@ -48,7 +59,7 @@ var DDoc = (function() {
     "lists"     : Render.list,
     "shows"    : Render.show,
     "filters"   : Filter.filter,
-    "views"     : Filter.filter_view, 
+    "views"     : Filter.filter_view,
     "updates"  : Render.update,
     "validate_doc_update" : Validate.validate,
     "rewrites"  : Render.rewrite
@@ -87,7 +98,10 @@ var DDoc = (function() {
                        " on design doc " + ddocId]);
               }
               if (typeof fun != "function") {
-                fun = Couch.compileFunction(fun, ddoc, funPath.join('.'));
+                // For filter_view we want the emit() function to be overridden
+                // and just toggle a flag instead of accumulating rows
+                var sandbox = (cmd === "views") ? create_filter_sandbox() : create_sandbox();
+                fun = Couch.compileFunction(fun, ddoc, funPath.join('.'), sandbox);
                 // cache the compiled fun on the ddoc
                 point[funPath[i]] = fun;
               };
@@ -116,6 +130,7 @@ var Loop = function() {
     "add_lib"  : State.addLib,
     "map_doc"  : Views.mapDoc,
     "index_doc": Dreyfus.indexDoc,
+    "nouveau_index_doc": Nouveau.indexDoc,
     "reduce"   : Views.reduce,
     "rereduce" : Views.rereduce
   };
@@ -127,13 +142,21 @@ var Loop = function() {
       quit(-1);
     } else if (type == "error") {
       respond(e);
+    } else if (e.name == "InternalError") {
+      // If the internal error is caught by handleViewError it will be
+      // re-thrown as a ["fatal", ...] error, and we already handle that above.
+      // Here we handle the case when the error is thrown outside of
+      // handleViewError, for instance when serializing the rows to be sent
+      // back to the user
+      respond(["error", e.name, e.message]);
+      quit(-1);
     } else if (e.error && e.reason) {
       // compatibility with old error format
       respond(["error", e.error, e.reason]);
     } else if (e.name) {
       respond(["error", e.name, e]);
     } else {
-      respond(["error","unnamed_error",e.toSource ? e.toSource() : e.stack]);
+      respond(["error","unnamed_error", e.toSource()]);
     }
   };
   while (line = readline()) {

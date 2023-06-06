@@ -107,12 +107,36 @@ defmodule AttachmentsTest do
     rev = resp.body["rev"]
 
     resp = Couch.delete("/#{db_name}/bin_doc/foo.txt", query: %{w: 3})
-
     assert resp.status_code == 409
+
+    resp = Couch.delete("/#{db_name}/bin_doc/foo.txt", query: %{w: 3, rev: "4-garbage"})
+    assert resp.status_code == 409
+    assert resp.body["error"] == "not_found"
+    assert resp.body["reason"] == "missing_rev"
+
+    resp = Couch.delete("/#{db_name}/bin_doc/notexisting.txt", query: %{w: 3, rev: rev})
+    assert resp.status_code == 404
+    assert resp.body["error"] == "not_found"
+    assert resp.body["reason"] == "Document is missing attachment"
 
     resp = Couch.delete("/#{db_name}/bin_doc/foo.txt", query: %{w: 3, rev: rev})
     assert resp.status_code == 200
     assert resp.headers["location"] == nil
+  end
+
+  @tag :with_db
+  test "delete attachment request with a payload should not block following requests", context do
+    db_name = context[:db_name]
+
+    resp = Couch.put("/#{db_name}/bin_doc", body: @bin_att_doc, query: %{w: 3})
+    assert resp.status_code in [201, 202]
+    rev = resp.body["rev"]
+
+    resp = Couch.delete("/#{db_name}/bin_doc/foo.txt", body: 'some payload', query: %{w: 3, rev: rev}, ibrowse: [{:max_sessions, 1}, {:max_pipeline_size, 1}])
+    assert resp.status_code == 200
+
+    resp = Couch.get("/", timeout: 1000, ibrowse: [{:max_sessions, 1}, {:max_pipeline_size, 1}])
+    assert resp.status_code == 200
   end
 
   @tag :with_db
@@ -290,7 +314,7 @@ defmodule AttachmentsTest do
   end
 
   @tag :with_db
-  test "test COUCHDB-497 - empty attachments", context do
+  test "COUCHDB-497 - empty attachments", context do
     db_name = context[:db_name]
 
     lorem_att = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. "
@@ -405,29 +429,6 @@ defmodule AttachmentsTest do
 
     assert resp.status_code == 412
     assert resp.body["error"] == "missing_stub"
-  end
-
-  @tag :with_db
-  test "md5 header for attachments", context do
-    db_name = context[:db_name]
-    md5 = "MntvB0NYESObxH4VRDUycw=="
-
-    bin_data = "foo bar"
-
-    resp =
-      Couch.put(
-        "/#{db_name}/bin_doc8/attachment.txt",
-        body: bin_data,
-        headers: ["Content-Type": "application/octet-stream", "Content-MD5": md5],
-        query: %{w: 3}
-      )
-
-    assert resp.status_code in [201, 202]
-    assert resp.body["ok"]
-
-    resp = Couch.get("/#{db_name}/bin_doc8/attachment.txt")
-    assert resp.status_code == 200
-    assert md5 == resp.headers["Content-MD5"]
   end
 
   @tag :with_db

@@ -2,11 +2,14 @@
     {package_author_name, "The Apache Software Foundation"},
     {cluster_port, 5984},
     {backend_port, 5986},
+    {prometheus_port, 17986},
     {node_name, "-name couchdbtest@127.0.0.1"},
 
     {data_dir, "/tmp"},
     {prefix, "/tmp"},
-    {view_index_dir, "/tmp"}
+    {view_index_dir, "/tmp"},
+    {state_dir, "/tmp"},
+    {log_dir, "/tmp"}
 ]}.
 {dir, "tmp"}.
 {dir, "tmp/etc"}.

@@ -2,7 +2,6 @@ defmodule DesignPathTest do
   use CouchTestCase
 
   @moduletag :design_docs
-  @moduletag kind: :single_node
 
   @moduledoc """
   Test CouchDB design documents path

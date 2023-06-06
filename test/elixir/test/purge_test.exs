@@ -2,7 +2,6 @@ defmodule PurgeTest do
   use CouchTestCase
 
   @moduletag :purge
-  @moduletag kind: :single_node
 
   @tag :with_db
   test "purge documents", context do

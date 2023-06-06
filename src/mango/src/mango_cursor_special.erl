@@ -22,11 +22,7 @@
     handle_message/2
 ]).
 
-
--include_lib("couch/include/couch_db.hrl").
--include_lib("couch_mrview/include/couch_mrview.hrl").
 -include("mango_cursor.hrl").
-
 
 create(Db, Indexes, Selector, Opts) ->
     InitialRange = mango_idx_view:field_ranges(Selector),
@@ -36,8 +32,8 @@ create(Db, Indexes, Selector, Opts) ->
     % catchall is the most expensive range
     FieldRanges = InitialRange ++ CatchAll,
     Composited = mango_cursor_view:composite_indexes(Indexes, FieldRanges),
-    {Index, IndexRanges} = mango_cursor_view:choose_best_index(Db, Composited),
-    
+    {Index, IndexRanges} = mango_cursor_view:choose_best_index(Composited),
+
     Limit = couch_util:get_value(limit, Opts, mango_opts:default_limit()),
     Skip = couch_util:get_value(skip, Opts, 0),
     Fields = couch_util:get_value(fields, Opts, all_fields),
